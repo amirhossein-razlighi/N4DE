@@ -62,7 +62,7 @@ def img_loss(imgs, target_imgs, multi_scale=True):
 
 def main(config):
     model_cfg = Namespace(
-        dim=3, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
+        dim=4, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
     )
     f=config.init_ckpt
     # f = None
@@ -93,7 +93,7 @@ def main(config):
             # else:
             #     name = f"{t}.ply"
             name = ""
-
+            
             R = Renderer(
                 config.num_views,
                 config.res,
@@ -151,15 +151,15 @@ def main(config):
                 vertices_subset = vertices[min_i:max_i]
                 # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
                 # we should add an axis to the end of the tensor.
-                # inp = torch.cat(
-                #     (
-                #         vertices_subset,
-                #         torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
-                #     ),
-                #     dim=1,
-                # )
+                inp = torch.cat(
+                    (
+                        vertices_subset,
+                        torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
+                    ),
+                    dim=1,
+                )
                 vertices_subset.requires_grad_()
-                pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
+                pred_sdf = module.forward(inp.unsqueeze(0)).squeeze(0)
                 normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
                 F[min_i:max_i] = torch.nan_to_num(
                     torch.sum(
@@ -183,13 +183,13 @@ def main(config):
                     vertices_subset = vertices[min_i:max_i].detach()
                     # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
                     # we should add an axis to the end of the tensor.
-                    # vertices_subset = torch.cat(
-                    #     (
-                    #         vertices_subset,
-                    #         torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
-                    #     ),
-                    #     dim=1,
-                    # )
+                    vertices_subset = torch.cat(
+                        (
+                            vertices_subset,
+                            torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
+                        ),
+                        dim=1,
+                    )
                     pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
                     loss.backward()

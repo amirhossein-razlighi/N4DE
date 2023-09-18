@@ -93,9 +93,9 @@ class SDFModule(LightningModule):
             state_dict = torch.load(f)["net"]
             # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
             # which is [512, 3] so it become [512, 4]
-            # state_dict[f"blocks.0.weight"] = torch.cat(
-            #     (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
-            # )
+            state_dict[f"blocks.0.weight"] = torch.cat(
+                (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
+            )
             self.synthesis_nw.load_state_dict(state_dict)
 
             # In case you need to load from a specific checkpoint
@@ -148,14 +148,14 @@ class SDFModule(LightningModule):
             with torch.no_grad():
                 xyz = torch.from_numpy(grid[sidx:eidx, :]).float().cuda().view(1, -1, 3)
                 # concat time to 'xyz - offset' and feed in to the network
-                # inp = torch.cat(
-                #     (
-                #         xyz - offset,
-                #         torch.ones((xyz.shape[0], xyz.shape[1], 1)).cuda() * t,
-                #     ),
-                #     dim=2,
-                # )
-                distances = self.forward(xyz)
+                inp = torch.cat(
+                    (
+                        xyz - offset,
+                        torch.ones((xyz.shape[0], xyz.shape[1], 1)).cuda() * t,
+                    ),
+                    dim=2,
+                )
+                distances = self.forward(inp)
                 distances = distances.cpu().numpy()
             dists_lst.append(distances.reshape(-1))
         dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(-1)
