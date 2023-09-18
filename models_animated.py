@@ -126,7 +126,7 @@ class SDFModule(LightningModule):
         return est_sdf
 
     def get_zero_points(self, t, extent=10, mesh_res=32, offset=0, verbose=False):
-        res = mesh_res = 16
+        res = mesh_res
         bound = 1.0
         batch_size = 10000
         xs, ys, zs = np.meshgrid(np.arange(res), np.arange(res), np.arange(res))
@@ -159,7 +159,6 @@ class SDFModule(LightningModule):
                 distances = distances.cpu().numpy()
             dists_lst.append(distances.reshape(-1))
         dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(-1)
-        # dists = np.concatenate([np.average(x.reshape(-1, 3), axis=-1) for x in dists_lst], axis=0)
 
         field = dists.reshape(res, res, res)
         try:
