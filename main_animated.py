@@ -76,6 +76,7 @@ def main(config):
     if config.num_frames is None:
         config.num_frames = 1
 
+
     for t in range(config.num_frames):
         print(f"Frame: {t}")
 
@@ -87,12 +88,12 @@ def main(config):
         vertices.requires_grad_()
 
         with torch.no_grad():
-            # Comment this unless you run for Anim_1/
-            # if t == 0:
-            #     name = f"{t}.obj"
-            # else:
-            #     name = f"{t}.ply"
             name = ""
+            # Comment this unless you run for Anim_1/
+            if t == 3:
+                name = f"{t}.obj"
+            else:
+                name = f"{t}.ply"
             
             R = Renderer(
                 config.num_views,
@@ -212,7 +213,7 @@ def main(config):
                     logger.add_scalar("psnr", psnr, global_step=(e + config.epochs * t))
                 mesh = trimesh.Trimesh(vertices_np, faces_np)
                 cd = compute_trimesh_chamfer(R.mesh, mesh)
-                logger.add_scalar("cd", cd, global_step=e)
+                logger.add_scalar("cd", cd, global_step= (e + config.epochs * t))
                 mesh.export(f"{config.expdir}/mesh_{(e + config.epochs * t):07d}.ply")
 
             if e % config.ckpt_log_freq == 0:
