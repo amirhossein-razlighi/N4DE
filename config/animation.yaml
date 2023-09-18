@@ -1,19 +1,19 @@
-exp: "bunny"
-init_ckpt: "data/sphere.pt"
-mesh: "data/bunny.obj"
+exp: "Animation_1"
+init_ckpt: data/sphere.pt
+mesh: "data/Anim_1/"
 logdir: "logs/"
 
-num_frames: 1
+num_frames: 4
 num_views: 100
 res: 256
 epochs: 3000
-iters: 1
-batch_size: 8192
+iters: 2
+batch_size: 4000
 eps: 0.0001
 mesh_res_base: 128
 mesh_res_limit: 175
 fine_e: 500
-max_v: 950000
+max_v: 5000000
 lambda_: 100
 max_laplace_lam: 0.0
 min_laplace_lam: 0.0
@@ -22,6 +22,7 @@ num_vol_points: 16384
 weight_decay: 0.1
 lr: 0.000002
 scale: 1.7
+zero_init_last_layer: True
 
 img_log_freq: 100
 mesh_log_freq: 50

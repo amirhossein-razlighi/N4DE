@@ -8,7 +8,7 @@ from models import SDFModule
 from render import Renderer
 from utils import *
 
-def gauss_kernel(size=5, device=torch.device('cuda:0'), channels=3):
+def gauss_kernel(size=5, device=torch.device('cuda'), channels=3):
     kernel = torch.tensor([[1., 4., 6., 4., 1],
                            [4., 16., 24., 16., 4.],
                            [6., 24., 36., 24., 6.],
@@ -24,7 +24,7 @@ def downsample(x):
 
 def conv_gauss(img, kernel):
     img = torch.nn.functional.pad(img, (2, 2, 2, 2), mode='reflect')
-    out = torch.nn.functional.conv2d(img, kernel.cuda(), groups=img.shape[1])
+    out = torch.nn.functional.conv2d(img.cuda(), kernel.cuda(), groups=img.shape[1])
     return out
 
 def img_loss(imgs, target_imgs, multi_scale=True):
@@ -164,5 +164,5 @@ def main(config):
             torch.save(module.state_dict(), f'{config.expdir}/iter_{e:04d}.ckpt')
 
 if __name__ == '__main__':
-    config = parse_config(create_dir=False)
+    config = parse_config(create_dir=True)
     main(config)

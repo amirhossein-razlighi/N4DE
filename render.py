@@ -99,6 +99,6 @@ class Renderer:
         return self.render_pointlight(pos, pos_idx, normals)
 
 if __name__ == '__main__':
-    R = Renderer(10, 1024)
+    R = Renderer(10, 1024, fname='data/Cube/80.obj')
     for i in range(R.target_imgs.shape[0]):
-        utils.save_image(f'data/{i:06d}.png', R.target_imgs[i, :, :, :3].detach().cpu().numpy())
+        utils.save_image(f'data/render_cube/{i:06d}.png', R.target_imgs[i, :, :, :3].detach().cpu().numpy())

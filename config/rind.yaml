@@ -1,5 +1,5 @@
 exp: "rind"
-init_ckpt: "data/sphere.pt"
+init_ckpt: "logs/Bunny_To_Bunny/iter_2900.ckpt"
 mesh: "data/rind_wide.ply"
 logdir: "logs/"
 

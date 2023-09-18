@@ -75,9 +75,12 @@ class Net(nn.Module):
         :return: (bs, npoints, self.dim) Gradient (self.dim dimension)
         """
         net = x  # (bs, n_points, dim)
+        self.debug_res = []
         for block in self.blocks[:-1]:
             net = self.act(block(net))
+            self.debug_res.append(net)
         out = self.blocks[-1](net)
+        self.debug_res.append(out)
         return out
 
 
@@ -90,9 +93,9 @@ class SDFModule(LightningModule):
             state_dict = torch.load(f)["net"]
             # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
             # which is [512, 3] so it become [512, 4]
-            state_dict[f"blocks.0.weight"] = torch.cat(
-                    (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
-                )
+            # state_dict[f"blocks.0.weight"] = torch.cat(
+            #     (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
+            # )
             self.synthesis_nw.load_state_dict(state_dict)
 
             # In case you need to load from a specific checkpoint
@@ -122,8 +125,8 @@ class SDFModule(LightningModule):
         est_sdf = self.synthesis_nw(coords)
         return est_sdf
 
-    def get_zero_points(self, extent=10, mesh_res=32, offset=0, verbose=False):
-        res = mesh_res
+    def get_zero_points(self, t, extent=10, mesh_res=32, offset=0, verbose=False):
+        res = mesh_res = 16
         bound = 1.0
         batch_size = 10000
         xs, ys, zs = np.meshgrid(np.arange(res), np.arange(res), np.arange(res))
@@ -144,17 +147,37 @@ class SDFModule(LightningModule):
             eidx = min(grid.shape[0], eidx)
             with torch.no_grad():
                 xyz = torch.from_numpy(grid[sidx:eidx, :]).float().cuda().view(1, -1, 3)
-                distances = self.forward(xyz - offset)
+                # concat time to 'xyz - offset' and feed in to the network
+                # inp = torch.cat(
+                #     (
+                #         xyz - offset,
+                #         torch.ones((xyz.shape[0], xyz.shape[1], 1)).cuda() * t,
+                #     ),
+                #     dim=2,
+                # )
+                distances = self.forward(xyz)
                 distances = distances.cpu().numpy()
             dists_lst.append(distances.reshape(-1))
+        dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(-1)
+        # dists = np.concatenate([np.average(x.reshape(-1, 3), axis=-1) for x in dists_lst], axis=0)
 
-        dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(
-            -1
-        )
         field = dists.reshape(res, res, res)
-        vert, face, _, _ = skimage.measure.marching_cubes(
-            field, level=0.0, spacing=[voxel_size] * 3, method="lorensen"
-        )
+        try:
+            vert, face, _, _ = skimage.measure.marching_cubes(
+                field, level=0.0, spacing=[voxel_size] * 3, method="lorensen"
+            )
+        except:
+            for item in self.synthesis_nw.debug_res:
+                print(item)
+            print(inp)
+            print(inp.shape)
+            print(distances)
+            print(distances.shape)
+            print(field)
+            print(dists_lst)
+            print(dists)
+            print(res)
+            raise Exception("Failed to do marching cubes!")
         vert += voxel_origin
         vert -= offset
         return vert, face
