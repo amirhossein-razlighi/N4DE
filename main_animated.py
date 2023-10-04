@@ -7,6 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from models_animated import SDFModule
 from render import Renderer
 from utils import *
+from tqdm import tqdm
 
 
 def gauss_kernel(size=5, device=torch.device("cuda"), channels=3):
@@ -64,7 +65,7 @@ def main(config):
     model_cfg = Namespace(
         dim=4, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
     )
-    f=config.init_ckpt
+    f = config.init_ckpt
     # f = None
     module = SDFModule(cfg=model_cfg, f=f).cuda()
     logger = SummaryWriter(log_dir=config.expdir, flush_secs=5)
@@ -76,45 +77,50 @@ def main(config):
     if config.num_frames is None:
         config.num_frames = 1
 
+    for e in range(config.epochs):
+        print(f"Epoch: {e}")
 
-    for t in range(config.num_frames):
-        print(f"Frame: {t}")
+        laplace_lam = config.max_laplace_lam
 
-        gt_sdf = torch.zeros(config.max_v, 1).cuda()
-        F = torch.zeros(config.max_v, 1).cuda()
-        vertices = torch.zeros((config.max_v, 3)).cuda()
-        normals = torch.zeros((config.max_v, 3)).cuda()
-        faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
-        vertices.requires_grad_()
+        if e >= config.fine_e:
+            laplace_lam = config.min_laplace_lam
+            mesh_res = config.mesh_res_limit + np.random.randint(low=-3, high=3)
 
-        with torch.no_grad():
-            name = ""
-            # Comment this unless you run for Anim_1/
-            if t == 3:
-                name = f"{t}.obj"
-            else:
-                name = f"{t}.ply"
-            
-            R = Renderer(
-                config.num_views,
-                config.res,
-                fname=config.mesh + name,
-                scale=config.scale,
-            )
-            target_imgs = R.target_imgs
-
-        logger.add_image(f"target_{t}", target_imgs[-1].permute(2, 0, 1).clamp(0, 1))
-
-        for e in range(config.epochs):
+        else:
             laplace_lam = config.max_laplace_lam
+            mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
 
-            if e >= config.fine_e:
-                laplace_lam = config.min_laplace_lam
-                mesh_res = config.mesh_res_limit + np.random.randint(low=-3, high=3)
+        # go from each frame to the next in one epoch and train the MLP
+        pbar = tqdm(range(config.num_frames))
+        for t in pbar:
+            pbar.set_description(f"Frame: {t}")
 
-            else:
-                laplace_lam = config.max_laplace_lam
-                mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
+            gt_sdf = torch.zeros(config.max_v, 1).cuda()
+            F = torch.zeros(config.max_v, 1).cuda()
+            vertices = torch.zeros((config.max_v, 3)).cuda()
+            normals = torch.zeros((config.max_v, 3)).cuda()
+            faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
+            vertices.requires_grad_()
+
+            with torch.no_grad():
+                # name = f"{t}.obj"
+                # Comment this unless you run for Anim_1/
+                if t == 0:
+                    name = f"{t}.obj"
+                else:
+                    name = f"{t}.ply"
+
+                R = Renderer(
+                    config.num_views,
+                    config.res,
+                    fname=config.mesh + name,
+                    scale=config.scale,
+                )
+                target_imgs = R.target_imgs
+
+            logger.add_image(
+                f"target_{t}", target_imgs[-1].permute(2, 0, 1).clamp(0, 1)
+            )
 
             with torch.no_grad():
                 vertices_np, faces_np = module.get_zero_points(mesh_res=mesh_res, t=t)
@@ -141,9 +147,133 @@ def main(config):
             loss.backward()
             logger.add_scalar("loss", loss.item(), global_step=e)
 
+        with torch.no_grad():
+            dE_dx = vertices.grad[:v].detach()
+        idx = 0
+        while idx < v:
+            optimizer.zero_grad()
+            min_i = idx
+            max_i = min(min_i + config.batch_size, v)
+            vertices_subset = vertices[min_i:max_i]
+            # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
+            # we should add an axis to the end of the tensor.
+            inp = torch.cat(
+                (
+                    vertices_subset,
+                    torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
+                ),
+                dim=1,
+            )
+            vertices_subset.requires_grad_()
+            pred_sdf = module.forward(inp.unsqueeze(0)).squeeze(0)
+            normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
+            F[min_i:max_i] = torch.nan_to_num(
+                torch.sum(
+                    normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
+                )
+            )
+            gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
+            idx += config.batch_size
+        n_batches = v // config.batch_size
+        if n_batches == 0:
+            n_batches = 1
+        for j in range(config.iters):
+            optimizer.zero_grad()
+            idx = 0
+            while idx < v:
+                min_i = idx
+                max_i = min(min_i + config.batch_size, v)
+                vertices_subset = vertices[min_i:max_i].detach()
+                # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
+                # we should add an axis to the end of the tensor.
+                vertices_subset = torch.cat(
+                    (
+                        vertices_subset,
+                        torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
+                    ),
+                    dim=1,
+                )
+                pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
+                loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
+                loss.backward()
+                idx += config.batch_size
+            optimizer.step()
+
+        if e % config.img_log_freq == 0:
+            logger.add_image(
+                "est",
+                imgs[-1].permute(2, 0, 1).clamp(0, 1),
+                global_step=(e),
+            )
+        if e % config.mesh_log_freq == 0:
+            with torch.no_grad():
+                mse = (imgs - target_imgs).square().mean()
+                psnr = -10.0 * torch.log10(mse)
+                logger.add_scalar("psnr", psnr, global_step=(e))
+            mesh = trimesh.Trimesh(vertices_np, faces_np)
+            cd = compute_trimesh_chamfer(R.mesh, mesh)
+            logger.add_scalar("cd", cd, global_step=(e))
+            mesh.export(f"{config.expdir}/mesh_{(e):07d}.ply")
+        if e % config.ckpt_log_freq == 0:
+            torch.save(
+                module.state_dict(),
+                f"{config.expdir}/iter_{(e):07d}.ckpt",
+            )
+
+
+def old_iteration():
+    for t in range(config.num_frames):
+        print(f"Frame: {t}")
+        gt_sdf = torch.zeros(config.max_v, 1).cuda()
+        F = torch.zeros(config.max_v, 1).cuda()
+        vertices = torch.zeros((config.max_v, 3)).cuda()
+        normals = torch.zeros((config.max_v, 3)).cuda()
+        faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
+        vertices.requires_grad_()
+        with torch.no_grad():
+            # name = f"{t}.obj"
+            # Comment this unless you run for Anim_1/
+            if t == 0:
+                name = f"{t}.obj"
+            else:
+                name = f"{t}.ply"
+            R = Renderer(
+                config.num_views,
+                config.res,
+                fname=config.mesh + name,
+                scale=config.scale,
+            )
+            target_imgs = R.target_imgs
+        logger.add_image(f"target_{t}", target_imgs[-1].permute(2, 0, 1).clamp(0, 1))
+        for e in range(config.epochs):
+            laplace_lam = config.max_laplace_lam
+            if e >= config.fine_e:
+                laplace_lam = config.min_laplace_lam
+                mesh_res = config.mesh_res_limit + np.random.randint(low=-3, high=3)
+            else:
+                laplace_lam = config.max_laplace_lam
+                mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
+            with torch.no_grad():
+                vertices_np, faces_np = module.get_zero_points(mesh_res=mesh_res, t=t)
+                v = vertices_np.shape[0]
+                f = faces_np.shape[0]
+                vertices.data[:v] = torch.from_numpy(vertices_np)
+                faces.data[:f] = torch.from_numpy(np.ascontiguousarray(faces_np))
+            vertices.grad = None
+            edges = compute_edges(vertices[:v], faces[:f])
+            L = laplacian_simple(vertices[:v], edges.long())
+            laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
+            face_normals = compute_face_normals(vertices[:v], faces[:f])
+            vertex_normals = compute_vertex_normals(
+                vertices[:v], faces[:f], face_normals
+            )
+            imgs = R.render(vertices[:v], faces[:f], vertex_normals)
+            loss = img_loss(imgs, target_imgs, multi_scale=True)
+            loss = loss + laplace_lam * laplacian_loss
+            loss.backward()
+            logger.add_scalar("loss", loss.item(), global_step=e)
             with torch.no_grad():
                 dE_dx = vertices.grad[:v].detach()
-
             idx = 0
             while idx < v:
                 optimizer.zero_grad()
@@ -169,14 +299,11 @@ def main(config):
                 )
                 gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
                 idx += config.batch_size
-
             n_batches = v // config.batch_size
             if n_batches == 0:
                 n_batches = 1
-
             for j in range(config.iters):
                 optimizer.zero_grad()
-
                 idx = 0
                 while idx < v:
                     min_i = idx
@@ -195,17 +322,15 @@ def main(config):
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
                     loss.backward()
                     idx += config.batch_size
-
                 optimizer.step()
-
             if e % 1 == 0:
                 print(f"Epoch: {(e + config.epochs * t)}")
-
             if e % config.img_log_freq == 0:
                 logger.add_image(
-                    "est", imgs[-1].permute(2, 0, 1).clamp(0, 1), global_step=(e + config.epochs * t)
+                    "est",
+                    imgs[-1].permute(2, 0, 1).clamp(0, 1),
+                    global_step=(e + config.epochs * t),
                 )
-
             if e % config.mesh_log_freq == 0:
                 with torch.no_grad():
                     mse = (imgs - target_imgs).square().mean()
@@ -213,11 +338,13 @@ def main(config):
                     logger.add_scalar("psnr", psnr, global_step=(e + config.epochs * t))
                 mesh = trimesh.Trimesh(vertices_np, faces_np)
                 cd = compute_trimesh_chamfer(R.mesh, mesh)
-                logger.add_scalar("cd", cd, global_step= (e + config.epochs * t))
+                logger.add_scalar("cd", cd, global_step=(e + config.epochs * t))
                 mesh.export(f"{config.expdir}/mesh_{(e + config.epochs * t):07d}.ply")
-
             if e % config.ckpt_log_freq == 0:
-                torch.save(module.state_dict(), f"{config.expdir}/iter_{(e + config.epochs * t):07d}.ckpt")
+                torch.save(
+                    module.state_dict(),
+                    f"{config.expdir}/iter_{(e + config.epochs * t):07d}.ckpt",
+                )
 
 
 if __name__ == "__main__":
