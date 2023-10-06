@@ -77,8 +77,18 @@ def main(config):
     if config.num_frames is None:
         config.num_frames = 1
 
-    for e in range(config.epochs):
-        print(f"Epoch: {e}")
+    qbar = tqdm(range(config.epochs))
+    best_loss = np.inf
+
+    gt_sdf = torch.zeros(config.max_v, 1).cuda()
+    F = torch.zeros(config.max_v, 1).cuda()
+    vertices = torch.zeros((config.max_v, 3)).cuda()
+    normals = torch.zeros((config.max_v, 3)).cuda()
+    faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
+    vertices.requires_grad_()
+
+    for e in qbar:
+        qbar.set_description(f"Epoch: {e}")
 
         laplace_lam = config.max_laplace_lam
 
@@ -90,17 +100,9 @@ def main(config):
             laplace_lam = config.max_laplace_lam
             mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
 
-        # go from each frame to the next in one epoch and train the MLP
-        pbar = tqdm(range(config.num_frames))
-        for t in pbar:
-            pbar.set_description(f"Frame: {t}")
-
-            gt_sdf = torch.zeros(config.max_v, 1).cuda()
-            F = torch.zeros(config.max_v, 1).cuda()
-            vertices = torch.zeros((config.max_v, 3)).cuda()
-            normals = torch.zeros((config.max_v, 3)).cuda()
-            faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
-            vertices.requires_grad_()
+        # Iterating over frames (in one epoch)
+        for t in range(config.num_frames):
+            qbar.set_postfix_str(f"Frame: {t}")
 
             with torch.no_grad():
                 # name = f"{t}.obj"
@@ -141,63 +143,68 @@ def main(config):
                 vertices[:v], faces[:f], face_normals
             )
             imgs = R.render(vertices[:v], faces[:f], vertex_normals)
+            # Computing E
             loss = img_loss(imgs, target_imgs, multi_scale=True)
             loss = loss + laplace_lam * laplacian_loss
 
             loss.backward()
             logger.add_scalar("loss", loss.item(), global_step=e)
 
-        with torch.no_grad():
-            dE_dx = vertices.grad[:v].detach()
-        idx = 0
-        while idx < v:
-            optimizer.zero_grad()
-            min_i = idx
-            max_i = min(min_i + config.batch_size, v)
-            vertices_subset = vertices[min_i:max_i]
-            # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
-            # we should add an axis to the end of the tensor.
-            inp = torch.cat(
-                (
-                    vertices_subset,
-                    torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
-                ),
-                dim=1,
-            )
-            vertices_subset.requires_grad_()
-            pred_sdf = module.forward(inp.unsqueeze(0)).squeeze(0)
-            normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
-            F[min_i:max_i] = torch.nan_to_num(
-                torch.sum(
-                    normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
-                )
-            )
-            gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
-            idx += config.batch_size
-        n_batches = v // config.batch_size
-        if n_batches == 0:
-            n_batches = 1
-        for j in range(config.iters):
-            optimizer.zero_grad()
+            with torch.no_grad():
+                dE_dx = vertices.grad[:v].detach()
             idx = 0
             while idx < v:
+                optimizer.zero_grad()
                 min_i = idx
                 max_i = min(min_i + config.batch_size, v)
-                vertices_subset = vertices[min_i:max_i].detach()
+                vertices_subset = vertices[min_i:max_i]
                 # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
                 # we should add an axis to the end of the tensor.
-                vertices_subset = torch.cat(
+                inp = torch.cat(
                     (
                         vertices_subset,
                         torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
                     ),
                     dim=1,
                 )
-                pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
-                loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
-                loss.backward()
+                vertices_subset.requires_grad_()
+                pred_sdf = module.forward(inp.unsqueeze(0)).squeeze(0)
+                normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
+                # Flow field (F) = sum of (dx/dt * dE/dx)
+                F[min_i:max_i] = torch.nan_to_num(
+                    torch.sum(
+                        normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
+                    )
+                )
+                # Ground truth SDF = predicted SDF + epsilon * Flow field
+                gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
                 idx += config.batch_size
-            optimizer.step()
+            n_batches = v // config.batch_size
+            if n_batches == 0:
+                n_batches = 1
+            for j in range(config.iters):
+                optimizer.zero_grad()
+                idx = 0
+                while idx < v:
+                    min_i = idx
+                    max_i = min(min_i + config.batch_size, v)
+                    vertices_subset = vertices[min_i:max_i].detach()
+                    # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
+                    # we should add an axis to the end of the tensor.
+                    vertices_subset = torch.cat(
+                        (
+                            vertices_subset,
+                            torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
+                        ),
+                        dim=1,
+                    )
+                    pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
+                    # d_Phi / d_t
+                    loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
+                    loss.backward()
+                    idx += config.batch_size
+                # update the parameters
+                optimizer.step()
 
         if e % config.img_log_freq == 0:
             logger.add_image(
@@ -219,6 +226,12 @@ def main(config):
                 module.state_dict(),
                 f"{config.expdir}/iter_{(e):07d}.ckpt",
             )
+            if cd < best_loss:
+                best_loss = cd
+                torch.save(
+                    module.state_dict(),
+                    f"{config.expdir}/best.ckpt",
+                )
 
 
 def old_iteration():

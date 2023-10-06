@@ -1,4 +1,4 @@
-exp: "Animation_1"
+exp: "Animated"
 init_ckpt: data/sphere.pt
 mesh: "data/Anim_1/"
 logdir: "logs/"
@@ -6,7 +6,7 @@ logdir: "logs/"
 num_frames: 5
 num_views: 100
 res: 256
-epochs: 1500
+epochs: 3000
 iters: 1
 batch_size: 8192
 eps: 0.0001
