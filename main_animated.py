@@ -8,7 +8,7 @@ from models_animated import SDFModule
 from render import Renderer
 from utils import *
 from tqdm import tqdm
-
+from loss import LossMorphing
 
 def gauss_kernel(size=5, device=torch.device("cuda"), channels=3):
     kernel = torch.tensor(
@@ -60,14 +60,27 @@ def img_loss(imgs, target_imgs, multi_scale=True):
     loss = loss / count
     return loss
 
-
+"""
+A loss function, doing this:
+for (a,b) -> df/dt + <grad(f), F> = 0
+for t=t_i -> f = g_i
+"""
+def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
+    grad = gradient(pred_sdf, vertices)
+    df_dt = grad[:, 3]
+    df_3d = grad[:, :3]
+    if t == int(t):
+        return (gt_sdf - pred_sdf).abs().mean()
+    else:
+        return (gt_sdf - pred_sdf).abs().mean() + (df_dt + torch.sum(df_3d * F, dim=-1)).abs().mean()
+    
 def main(config):
     model_cfg = Namespace(
         dim=4, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
     )
     f = config.init_ckpt
     # f = None
-    module = SDFModule(cfg=model_cfg, f=f).cuda()
+    module = SDFModule(cfg=model_cfg, f=f, save_dir=config.expdir).cuda()
     logger = SummaryWriter(log_dir=config.expdir, flush_secs=5)
 
     optimizer = torch.optim.Adam(
@@ -82,13 +95,13 @@ def main(config):
 
     gt_sdf = torch.zeros(config.max_v, 1).cuda()
     F = torch.zeros(config.max_v, 1).cuda()
-    vertices = torch.zeros((config.max_v, 3)).cuda()
-    normals = torch.zeros((config.max_v, 3)).cuda()
+    vertices = torch.zeros((config.max_v, 4)).cuda() # last column is time
+    normals = torch.zeros((config.max_v, 4)).cuda()
     faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
     vertices.requires_grad_()
 
     for e in qbar:
-        qbar.set_description(f"Epoch: {e}")
+        qbar.set_description(f"Epoch {e}")
 
         laplace_lam = config.max_laplace_lam
 
@@ -106,7 +119,7 @@ def main(config):
 
             with torch.no_grad():
                 # name = f"{t}.obj"
-                # Comment this unless you run for Anim_1/
+                # Comment the code below, unless you run for Anim_1/
                 if t == 0:
                     name = f"{t}.obj"
                 else:
@@ -129,26 +142,33 @@ def main(config):
                 v = vertices_np.shape[0]
                 f = faces_np.shape[0]
 
-                vertices.data[:v] = torch.from_numpy(vertices_np)
+                concated = np.concatenate((vertices_np, np.ones((v, 1)) * t), axis=1)
+                vertices.data[:v] = torch.from_numpy(concated)
                 faces.data[:f] = torch.from_numpy(np.ascontiguousarray(faces_np))
 
             vertices.grad = None
 
-            edges = compute_edges(vertices[:v], faces[:f])
-            L = laplacian_simple(vertices[:v], edges.long())
+            edges = compute_edges(vertices[:v, :3], faces[:f])
+            L = laplacian_simple(vertices[:v, :3], edges.long())
             laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
 
-            face_normals = compute_face_normals(vertices[:v], faces[:f])
+            face_normals = compute_face_normals(vertices[:v, :3], faces[:f])
             vertex_normals = compute_vertex_normals(
-                vertices[:v], faces[:f], face_normals
+                vertices[:v, :3], faces[:f], face_normals
             )
-            imgs = R.render(vertices[:v], faces[:f], vertex_normals)
+            imgs = R.render(vertices[:v, :3], faces[:f], vertex_normals)
             # Computing E
             loss = img_loss(imgs, target_imgs, multi_scale=True)
             loss = loss + laplace_lam * laplacian_loss
-
             loss.backward()
             logger.add_scalar("loss", loss.item(), global_step=e)
+
+            if loss.item() < best_loss:
+                best_loss = loss.item()
+                torch.save(
+                    module.state_dict(),
+                    f"{config.expdir}/best.ckpt",
+                )
 
             with torch.no_grad():
                 dE_dx = vertices.grad[:v].detach()
@@ -158,17 +178,8 @@ def main(config):
                 min_i = idx
                 max_i = min(min_i + config.batch_size, v)
                 vertices_subset = vertices[min_i:max_i]
-                # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
-                # we should add an axis to the end of the tensor.
-                inp = torch.cat(
-                    (
-                        vertices_subset,
-                        torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
-                    ),
-                    dim=1,
-                )
                 vertices_subset.requires_grad_()
-                pred_sdf = module.forward(inp.unsqueeze(0)).squeeze(0)
+                pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
                 normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
                 # Flow field (F) = sum of (dx/dt * dE/dx)
                 F[min_i:max_i] = torch.nan_to_num(
@@ -189,18 +200,12 @@ def main(config):
                     min_i = idx
                     max_i = min(min_i + config.batch_size, v)
                     vertices_subset = vertices[min_i:max_i].detach()
-                    # add time parameter to the 3d inputs (x, y, z, t). the vertices are [n, x, y, z] so
-                    # we should add an axis to the end of the tensor.
-                    vertices_subset = torch.cat(
-                        (
-                            vertices_subset,
-                            torch.ones((vertices_subset.shape[0], 1)).cuda() * t,
-                        ),
-                        dim=1,
-                    )
                     pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
                     # d_Phi / d_t
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
+                    # term for morphing
+                    # d_phi/dt * <grad(phi), F>
+                    loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
                     loss.backward()
                     idx += config.batch_size
                 # update the parameters
@@ -226,12 +231,7 @@ def main(config):
                 module.state_dict(),
                 f"{config.expdir}/iter_{(e):07d}.ckpt",
             )
-            if cd < best_loss:
-                best_loss = cd
-                torch.save(
-                    module.state_dict(),
-                    f"{config.expdir}/best.ckpt",
-                )
+
 
 
 def old_iteration():

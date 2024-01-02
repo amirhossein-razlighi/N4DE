@@ -85,7 +85,7 @@ class Net(nn.Module):
 
 
 class SDFModule(LightningModule):
-    def __init__(self, in_features=3, w0_initial=30.0, cfg=None, f: str = None):
+    def __init__(self, in_features=3, w0_initial=30.0, cfg=None, f: str = None, save_dir:str=None):
         super().__init__()
         self.synthesis_nw = Net("", cfg)
         if f is not None:
@@ -97,7 +97,8 @@ class SDFModule(LightningModule):
                 (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
             )
             self.synthesis_nw.load_state_dict(state_dict)
-
+            self.save_dir = save_dir
+            
             # In case you need to load from a specific checkpoint
             # state_dict = torch.load(f)
             # new_state_dict = {}
@@ -128,7 +129,7 @@ class SDFModule(LightningModule):
     def get_zero_points(self, t, extent=10, mesh_res=32, offset=0, verbose=False):
         res = mesh_res
         bound = 1.0
-        batch_size = 10000
+        batch_size = 20000
         xs, ys, zs = np.meshgrid(np.arange(res), np.arange(res), np.arange(res))
         grid = np.concatenate(
             [ys[..., np.newaxis], xs[..., np.newaxis], zs[..., np.newaxis]], axis=-1
@@ -176,6 +177,10 @@ class SDFModule(LightningModule):
             print(dists_lst)
             print(dists)
             print(res)
+            torch.save(
+                    self.state_dict(),
+                    f"{self.save_dir}/failed_model_{t}.pth",
+                )
             raise Exception("Failed to do marching cubes!")
         vert += voxel_origin
         vert -= offset

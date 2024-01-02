@@ -3,13 +3,13 @@ init_ckpt: data/sphere.pt
 mesh: "data/Anim_1/"
 logdir: "logs/"
 
-num_frames: 5
+num_frames: 3  #5
 num_views: 100
 res: 256
 epochs: 3000
 iters: 1
-batch_size: 8192
-eps: 0.0001
+batch_size: 8192 #8192
+eps: 0.0001 # 0.0001
 mesh_res_base: 150
 mesh_res_limit: 200
 fine_e: 1000
@@ -20,7 +20,7 @@ min_laplace_lam: 0.0
 vol_lambda: 0.1
 num_vol_points: 16384
 weight_decay: 0.1
-lr: 0.000002
+lr: 0.000001 # 0.000002
 scale: 1.7
 
 img_log_freq: 100
