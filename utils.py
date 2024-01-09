@@ -24,9 +24,14 @@ class Namespace:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
-def dir_counter(LOGDIR, endswith=None):
+def dir_counter(LOGDIR, endswith=None, consider_max=False):
     if endswith is not None:
-        return len([name for name in os.listdir(LOGDIR) if name.endswith(endswith)])
+        if consider_max:
+            return max([int(name.split('_')[0]) for name in os.listdir(LOGDIR) if name.endswith(endswith)])
+        else:
+            return len([name for name in os.listdir(LOGDIR) if name.endswith(endswith)])
+    if consider_max:
+        return max([int(name.split('_')[0]) for name in os.listdir(LOGDIR)])
     return len([name for name in os.listdir(LOGDIR)])
 
 def dict2namespace(config):

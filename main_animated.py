@@ -161,7 +161,7 @@ def main(config):
             loss = img_loss(imgs, target_imgs, multi_scale=True)
             loss = loss + laplace_lam * laplacian_loss
             loss.backward()
-            logger.add_scalar("loss", loss.item(), global_step=e)
+            logger.add_scalar("image loss", loss.item(), global_step=e)
 
             if loss.item() < best_loss:
                 best_loss = loss.item()
@@ -204,16 +204,17 @@ def main(config):
                     
                     # d_Phi / d_t
                     # loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
-                    loss = (gt_sdf[min_i:max_i] - pred_sdf).square().mean() / n_batches
+                    loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
                     
                     # term for morphing
                     # d_phi/dt * <grad(phi), F>
                     # loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
                     
                     # Force F to have small magnitude
-                    loss += F[min_i:max_i].square().mean() / n_batches
+                    loss += F[min_i:max_i].abs().mean() / n_batches
 
                     loss.backward()
+                    logger.add_scalar("loss", loss.item(), global_step=e)
                     idx += config.batch_size
                 # update the parameters
                 optimizer.step()
