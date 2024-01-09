@@ -24,7 +24,9 @@ class Namespace:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
-def dir_counter(LOGDIR):
+def dir_counter(LOGDIR, endswith=None):
+    if endswith is not None:
+        return len([name for name in os.listdir(LOGDIR) if name.endswith(endswith)])
     return len([name for name in os.listdir(LOGDIR)])
 
 def dict2namespace(config):
@@ -48,8 +50,10 @@ def parse_config(suffix='', create_dir=True):
     with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.Loader)
     config = dict2namespace(config)
-    dir_count = str(dir_counter(config.logdir)) + '_' + config.exp + suffix
+    dir_count = str(dir_counter(config.logdir, endswith=config.exp)) + '_' + config.exp + suffix
     config.expdir = config.logdir + '/' + dir_count
+    print('Experiment dir: ', config.expdir)
+    print()
     config.test_mesh = args.test_mesh
     if create_dir:
         os.makedirs(config.expdir, exist_ok=True)
