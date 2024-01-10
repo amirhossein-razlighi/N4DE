@@ -27,11 +27,21 @@ class Namespace:
 def dir_counter(LOGDIR, endswith=None, consider_max=False):
     if endswith is not None:
         if consider_max:
-            return max([int(name.split('_')[0]) for name in os.listdir(LOGDIR) if name.endswith(endswith)])
+            length = [int(name.split('_')[0]) for name in os.listdir(LOGDIR) if name.endswith(endswith)]
+            if len(length) == 0:
+                length = 1
+            else:
+                length = max(length) + 1
+            return length
         else:
             return len([name for name in os.listdir(LOGDIR) if name.endswith(endswith)])
     if consider_max:
-        return max([int(name.split('_')[0]) for name in os.listdir(LOGDIR)])
+        length = [int(name.split('_')[0]) for name in os.listdir(LOGDIR)]
+        if len(length) == 0:
+            length = 1
+        else:
+            length = max(length) + 1
+        return length
     return len([name for name in os.listdir(LOGDIR)])
 
 def dict2namespace(config):
@@ -46,7 +56,7 @@ def dict2namespace(config):
         setattr(namespace, key, new_value)
     return namespace
 
-def parse_config(suffix='', create_dir=True):
+def parse_config(suffix='', create_dir=True, consider_max_dir=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, help='Config file')
     parser.add_argument('--test_mesh', type=str, help='Test Mesh', default=None)
@@ -55,7 +65,8 @@ def parse_config(suffix='', create_dir=True):
     with open(args.config, 'r') as f:
         config = yaml.load(f, Loader=yaml.Loader)
     config = dict2namespace(config)
-    dir_count = str(dir_counter(config.logdir, endswith=config.exp)) + '_' + config.exp + suffix
+    dir_count = str(dir_counter(config.logdir, endswith=config.exp,
+                     consider_max=consider_max_dir)) + '_' + config.exp + suffix
     config.expdir = config.logdir + '/' + dir_count
     print('Experiment dir: ', config.expdir)
     print()

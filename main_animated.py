@@ -118,12 +118,12 @@ def main(config):
             qbar.set_postfix_str(f"Frame: {t}")
 
             with torch.no_grad():
-                # name = f"{t}.obj"
+                name = f"{t+1}.ply"
                 # Comment the code below, unless you run for Anim_1/
-                if t == 0:
-                    name = f"{t}.obj"
-                else:
-                    name = f"{t}.ply"
+                # if t == 0:
+                #     name = f"{t}.obj"
+                # else:
+                #     name = f"{t}.ply"
 
                 R = Renderer(
                     config.num_views,
@@ -181,6 +181,7 @@ def main(config):
                 vertices_subset.requires_grad_()
                 pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
                 normals[min_i:max_i] = gradient(pred_sdf, vertices_subset).detach()
+
                 # Flow field (F) = sum of (dx/dt * dE/dx)
                 F[min_i:max_i] = torch.nan_to_num(
                     torch.sum(
@@ -211,7 +212,7 @@ def main(config):
                     # loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
                     
                     # Force F to have small magnitude
-                    loss += F[min_i:max_i].abs().mean() / n_batches
+                    # loss += F[min_i:max_i].abs().mean() / n_batches
 
                     loss.backward()
                     logger.add_scalar("loss", loss.item(), global_step=e)
@@ -370,5 +371,5 @@ def old_iteration():
 
 if __name__ == "__main__":
     # with torch.autograd.set_detect_anomaly(True):
-    config = parse_config(create_dir=True)
+    config = parse_config(create_dir=True, consider_max_dir=True)
     main(config)

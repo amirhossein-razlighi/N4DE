@@ -1,6 +1,6 @@
-exp: "Animated"
+exp: "Torus_Animation"
 init_ckpt: data/sphere.pt
-mesh: "data/Anim_1/"
+mesh: "data/Torus_Animation/"
 logdir: "logs/"
 
 num_frames: 3  #5
@@ -12,7 +12,7 @@ batch_size: 8192 #8192
 eps: 0.0001 # 0.0001
 mesh_res_base: 150
 mesh_res_limit: 200
-fine_e: 2000 # 1000
+fine_e: 1500 # 1000
 max_v: 3000000
 lambda_: 100
 max_laplace_lam: 0.0001 # 0.0
