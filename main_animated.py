@@ -1,14 +1,13 @@
-import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import make_grid
 from models_animated import SDFModule
 from render import Renderer
 from utils import *
 from tqdm import tqdm
-from loss import LossMorphing
 
 def gauss_kernel(size=5, device=torch.device("cuda"), channels=3):
     kernel = torch.tensor(
@@ -113,6 +112,7 @@ def main(config):
             laplace_lam = config.max_laplace_lam
             mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
 
+        images = []
         # Iterating over frames (in one epoch)
         for t in range(config.num_frames):
             qbar.set_postfix_str(f"Frame: {t}")
@@ -157,6 +157,7 @@ def main(config):
                 vertices[:v, :3], faces[:f], face_normals
             )
             imgs = R.render(vertices[:v, :3], faces[:f], vertex_normals)
+            images.append(imgs[-1])
             # Computing E
             loss = img_loss(imgs, target_imgs, multi_scale=True)
             loss = loss + laplace_lam * laplacian_loss
@@ -188,6 +189,7 @@ def main(config):
                         normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
                     )
                 )
+                logger.add_scalar("flow field magnitude", F[min_i:max_i].norm().item(), global_step=e)
                 # Ground truth SDF = predicted SDF + epsilon * Flow field
                 gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
                 idx += config.batch_size
@@ -204,7 +206,6 @@ def main(config):
                     pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
                     
                     # d_Phi / d_t
-                    # loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
                     
                     # term for morphing
@@ -221,9 +222,12 @@ def main(config):
                 optimizer.step()
 
         if e % config.img_log_freq == 0:
+            grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1))
+            for img in images[1:]:
+                grid = torch.cat((grid, make_grid(img.permute(2, 0, 1).clamp(0, 1))), dim=2)
             logger.add_image(
                 "est",
-                imgs[-1].permute(2, 0, 1).clamp(0, 1),
+                grid,
                 global_step=(e),
             )
         if e % config.mesh_log_freq == 0:
