@@ -113,6 +113,7 @@ def main(config):
             mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
 
         images = []
+        video_tensor = torch.zeros((config.num_frames, 3, config.res, config.res))
         # Iterating over frames (in one epoch)
         for t in range(config.num_frames):
             qbar.set_postfix_str(f"Frame: {t}")
@@ -221,6 +222,15 @@ def main(config):
                 # update the parameters
                 optimizer.step()
 
+        if e % config.video_log_freq == 0:
+            images = torch.stack(images)
+            video_tensor = images.permute(0, 3, 1, 2).unsqueeze(0)
+            logger.add_video(
+                "video",
+                video_tensor,
+                global_step=(e),
+                fps=10,
+            )
         if e % config.img_log_freq == 0:
             grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1))
             for img in images[1:]:
