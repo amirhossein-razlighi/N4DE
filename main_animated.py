@@ -9,6 +9,7 @@ from render import Renderer
 from utils import *
 from tqdm import tqdm
 
+
 def gauss_kernel(size=5, device=torch.device("cuda"), channels=3):
     kernel = torch.tensor(
         [
@@ -35,10 +36,17 @@ def conv_gauss(img, kernel):
     return out
 
 
-def img_loss(imgs, target_imgs, multi_scale=True):
+def img_loss(imgs, target_imgs, multi_scale=True, include_depth=False, config=None):
     loss = 0
     kernel = gauss_kernel()
     count = 0
+    images = imgs
+    imgs = imgs[:, :, :, :3]
+    depths = imgs[:, :, :, 3]
+    targets = target_imgs
+    target_imgs = target_imgs[:, :, :, :3]
+    target_depths = target_imgs[:, :, :, 3]
+
     for i in range(imgs.shape[0]):
         count += 1
         loss = loss + (imgs[i] - target_imgs[i]).square().mean()
@@ -56,14 +64,20 @@ def img_loss(imgs, target_imgs, multi_scale=True):
 
                 loss = loss + (current_est - current_gt).square().mean() / (j + 1)
 
+    if include_depth:
+        lambda_ = config.lambda_depth
+        loss += (depths - target_depths).square().mean() * lambda_
     loss = loss / count
     return loss
+
 
 """
 A loss function, doing this:
 for (a,b) -> df/dt + <grad(f), F> = 0
 for t=t_i -> f = g_i
 """
+
+
 def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
     grad = gradient(pred_sdf, vertices)
     df_dt = grad[:, 3]
@@ -71,8 +85,11 @@ def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
     if t == int(t):
         return (gt_sdf - pred_sdf).abs().mean()
     else:
-        return (gt_sdf - pred_sdf).abs().mean() + (df_dt + torch.sum(df_3d * F, dim=-1)).abs().mean()
-    
+        return (gt_sdf - pred_sdf).abs().mean() + (
+            df_dt + torch.sum(df_3d * F, dim=-1)
+        ).abs().mean()
+
+
 def main(config):
     model_cfg = Namespace(
         dim=4, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
@@ -94,7 +111,7 @@ def main(config):
 
     gt_sdf = torch.zeros(config.max_v, 1).cuda()
     F = torch.zeros(config.max_v, 1).cuda()
-    vertices = torch.zeros((config.max_v, 4)).cuda() # last element is time
+    vertices = torch.zeros((config.max_v, 4)).cuda()  # last element is time
     normals = torch.zeros((config.max_v, 4)).cuda()
     faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
     vertices.requires_grad_()
@@ -190,7 +207,9 @@ def main(config):
                         normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
                     )
                 )
-                logger.add_scalar("flow field magnitude", F[min_i:max_i].norm().item(), global_step=e)
+                logger.add_scalar(
+                    "flow field magnitude", F[min_i:max_i].norm().item(), global_step=e
+                )
                 # Ground truth SDF = predicted SDF + epsilon * Flow field
                 gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
                 idx += config.batch_size
@@ -205,14 +224,14 @@ def main(config):
                     max_i = min(min_i + config.batch_size, v)
                     vertices_subset = vertices[min_i:max_i].detach()
                     pred_sdf = module.forward(vertices_subset.unsqueeze(0)).squeeze(0)
-                    
+
                     # d_Phi / d_t
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
-                    
+
                     # term for morphing
                     # d_phi/dt * <grad(phi), F>
                     # loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
-                    
+
                     # Force F to have small magnitude
                     # loss += F[min_i:max_i].abs().mean() / n_batches
 
@@ -234,7 +253,9 @@ def main(config):
         if e % config.img_log_freq == 0:
             grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1))
             for img in images[1:]:
-                grid = torch.cat((grid, make_grid(img.permute(2, 0, 1).clamp(0, 1))), dim=2)
+                grid = torch.cat(
+                    (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1))), dim=2
+                )
             logger.add_image(
                 "est",
                 grid,
@@ -254,7 +275,6 @@ def main(config):
                 module.state_dict(),
                 f"{config.expdir}/iter_{(e):07d}.ckpt",
             )
-
 
 
 def old_iteration():
