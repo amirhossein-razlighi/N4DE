@@ -85,7 +85,14 @@ class Net(nn.Module):
 
 
 class SDFModule(LightningModule):
-    def __init__(self, in_features=3, w0_initial=30.0, cfg=None, f: str = None, save_dir:str=None):
+    def __init__(
+        self,
+        in_features=3,
+        w0_initial=30.0,
+        cfg=None,
+        f: str = None,
+        save_dir: str = None,
+    ):
         super().__init__()
         self.synthesis_nw = Net("", cfg)
         if f is not None:
@@ -98,7 +105,7 @@ class SDFModule(LightningModule):
             )
             self.synthesis_nw.load_state_dict(state_dict)
             self.save_dir = save_dir
-            
+
             # In case you need to load from a specific checkpoint
             # state_dict = torch.load(f)
             # new_state_dict = {}
@@ -159,7 +166,9 @@ class SDFModule(LightningModule):
                 distances = self.forward(inp)
                 distances = distances.cpu().numpy()
             dists_lst.append(distances.reshape(-1))
-        dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(-1)
+        dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(
+            -1
+        )
 
         field = dists.reshape(res, res, res)
         try:
@@ -178,10 +187,49 @@ class SDFModule(LightningModule):
             print(dists)
             print(res)
             torch.save(
-                    self.state_dict(),
-                    f"{self.save_dir}/failed_model_{t}.pth",
-                )
+                self.state_dict(),
+                f"{self.save_dir}/failed_model_{t}.pth",
+            )
             raise Exception("Failed to do marching cubes!")
         vert += voxel_origin
         vert -= offset
         return vert, face
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float()
+            * (-torch.log(torch.tensor(10000.0)) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.pe = pe
+
+    def forward(self, x):
+        x = self.pe[:, : x.size(1), :].expand(x.size(0), -1, -1)
+        return self.dropout(x)
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, input_size, d_model, nhead, num_layers, dropout=0.1):
+        super(TransformerEncoder, self).__init__()
+        self.input_size = input_size
+        self.d_model = d_model
+        self.nhead = nhead
+        self.num_layers = num_layers
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dropout=dropout
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+        self.embedder = nn.Linear(input_size, d_model)
+
+    def forward(self, x):
+        x = self.embedder(x)
+        x = self.transformer_encoder(x)
+        return x

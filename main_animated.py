@@ -94,7 +94,7 @@ def main(config):
 
     gt_sdf = torch.zeros(config.max_v, 1).cuda()
     F = torch.zeros(config.max_v, 1).cuda()
-    vertices = torch.zeros((config.max_v, 4)).cuda() # last column is time
+    vertices = torch.zeros((config.max_v, 4)).cuda() # last element is time
     normals = torch.zeros((config.max_v, 4)).cuda()
     faces = torch.empty((config.max_v, 3), dtype=torch.int32).cuda()
     vertices.requires_grad_()
