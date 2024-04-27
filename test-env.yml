@@ -7,12 +7,13 @@ dependencies:
   - python=3.9
   - numpy==1.22.2
   - pytorch
+  - torchvision
   - pytorch-cuda=12.1
 # - libigl==2.4.1
   - imageio==2.9.0
   - Pillow==9.2.0
   - plyfile==0.7.4
-  - pytorch-lightning
+  - pytorch-lightning==1.6.0
   - tensorboard
   - PyYAML==6.0
   - scikit-image==0.18.2

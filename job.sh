@@ -11,8 +11,11 @@
 #SBATCH --mail-type=ALL         # Send updates via email
 #SBATCH --gpus=l4-24g:2      # Request 2 GPUs of model L4
 
-srun -- mkenv -f /home/amirhossein_razlighi/codes/NIE_Animated/test-env.yml -- 
-cd nvdiffrast/ 
-pip install .
-cd ..
-python3 main_animated.py --config ./config/animation_deform.yaml
+srun -- mkenv -f /home/amirhossein_razlighi/codes/NIE_Animated/test-env.yml -- \
+bash -c "cd nvdiffrast/ && \
+pip install . && \
+cd .. && \
+export CC=/usr/bin/gcc-12 && \
+export CXX=/usr/bin/g++-12 && \
+export CUDA_HOME="/opt/nvidia-cuda-12.3/" && \
+python3 main_animated.py --config ./config/animation_deform.yaml"

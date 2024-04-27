@@ -41,11 +41,11 @@ def img_loss(imgs, target_imgs, multi_scale=True, include_depth=False, config=No
     kernel = gauss_kernel()
     count = 0
     images = imgs
-    imgs = imgs[:, :, :, :3]
-    depths = imgs[:, :, :, 3]
+    imgs = images[:, :, :, :3]
+    depths = images[:, :, :, 3]
     targets = target_imgs
-    target_imgs = target_imgs[:, :, :, :3]
-    target_depths = target_imgs[:, :, :, 3]
+    target_imgs = targets[:, :, :, :3]
+    target_depths = targets[:, :, :, 3]
 
     for i in range(imgs.shape[0]):
         count += 1
