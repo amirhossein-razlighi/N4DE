@@ -1,6 +1,6 @@
 exp: "Chair_Deform_Animation"
 init_ckpt: data/sphere.pt
-mesh: "data/Deform/"
+mesh: "data/Chair_Deform/"
 logdir: "logs/"
 
 num_frames: 3
