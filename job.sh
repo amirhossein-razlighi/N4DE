@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1              # Number of tasks (total)
 #SBATCH --cpus-per-task=8       # Number of CPU cores (threads) per task
 #SBATCH --mem-per-cpu=4G        # Memory limit per CPU core (there is no --mem-per-task)
-#SBATCH --time=02:15:00         # Job timeout
+#SBATCH --time=03:15:00         # Job timeout
 #SBATCH --output=./job_out/myjob.log      # Redirect stdout to a log file
 #SBATCH --error=./job_out/myjob.error     # Redirect stderr to a separate error log file
 #SBATCH --mail-type=ALL         # Send updates via email

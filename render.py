@@ -83,8 +83,8 @@ class Renderer:
     def render_pointlight(self, pos, pos_idx, normals):
         v_hom = torch.nn.functional.pad(pos, (0,1), 'constant', 1.0)
         v_ndc = torch.matmul(v_hom, self.mvps.transpose(1,2))
-        rast = dr.rasterize(self.glctx, v_ndc, pos_idx, [self.res,
-            self.res])[0]
+        rast, depth = dr.rasterize(self.glctx, v_ndc, pos_idx, [self.res,
+            self.res])
         v_cols = torch.zeros_like(pos)
 
         pixel_normals = dr.interpolate(normals[None, ...], rast, pos_idx)[0]
@@ -92,6 +92,12 @@ class Renderer:
         result = dr.antialias(torch.where(rast[..., -1:] != 0, diffuse,
             self.zero_tensor),
                     rast, v_ndc, pos_idx)
+        
+        # Normalize depth to [0, 1] range
+        # depth = (depth - depth.min()) / (depth.max() - depth.min())
+        # depth = torch.where(rast[..., -1:] != 0, depth, self.zero_tensor)
+
+        # result = torch.cat([result, depth], dim=-1)
 
         return torch.nan_to_num(result)
 

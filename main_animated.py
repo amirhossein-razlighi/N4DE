@@ -42,10 +42,10 @@ def img_loss(imgs, target_imgs, multi_scale=True, include_depth=False, config=No
     count = 0
     images = imgs
     imgs = images[:, :, :, :3]
-    depths = images[:, :, :, 3]
+    # depths = images[:, :, :, 3]
     targets = target_imgs
     target_imgs = targets[:, :, :, :3]
-    target_depths = targets[:, :, :, 3]
+    # target_depths = targets[:, :, :, 3]
 
     for i in range(imgs.shape[0]):
         count += 1
@@ -150,7 +150,8 @@ def main(config):
                     scale=config.scale,
                 )
                 target_imgs = R.target_imgs
-
+            
+            t = t / 10
             logger.add_image(
                 f"target_{t}", target_imgs[-1].permute(2, 0, 1).clamp(0, 1)
             )
@@ -251,10 +252,10 @@ def main(config):
                 fps=10,
             )
         if e % config.img_log_freq == 0:
-            grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1))
+            grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
             for img in images[1:]:
                 grid = torch.cat(
-                    (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1))), dim=2
+                    (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])), dim=2
                 )
             logger.add_image(
                 "est",
