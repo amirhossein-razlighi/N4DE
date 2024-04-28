@@ -4,11 +4,11 @@ mesh: "data/Chair_Deform/"
 logdir: "logs/"
 
 num_frames: 3
-num_views: 100
-res: 256
+num_views: 100 # 100
+res: 256 # 256
 epochs: 3000 # 3000
 iters: 1 # 1
-batch_size: 8192 #8192
+batch_size: 16384 #8192
 eps: 0.0001 # 0.0001
 mesh_res_base: 150
 mesh_res_limit: 200

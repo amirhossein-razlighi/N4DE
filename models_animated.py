@@ -92,16 +92,21 @@ class SDFModule(LightningModule):
         cfg=None,
         f: str = None,
         save_dir: str = None,
+        device: str = "cuda:0",
     ):
         super().__init__()
-        self.synthesis_nw = Net("", cfg)
+        self.synthesis_nw = Net("", cfg).to(device)
         if f is not None:
             # Uncomment if you need to load from 'sphere'
             state_dict = torch.load(f)["net"]
+
+            for key in state_dict.keys():
+                state_dict[key] = state_dict[key].to(device)
+
             # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
             # which is [512, 3] so it become [512, 4]
             state_dict[f"blocks.0.weight"] = torch.cat(
-                (state_dict[f"blocks.0.weight"], torch.rand(512, 1).cuda()), dim=1
+                (state_dict[f"blocks.0.weight"], torch.rand(512, 1).to(device)), dim=1
             )
             self.synthesis_nw.load_state_dict(state_dict)
             self.save_dir = save_dir
@@ -133,7 +138,9 @@ class SDFModule(LightningModule):
         est_sdf = self.synthesis_nw(coords)
         return est_sdf
 
-    def get_zero_points(self, t, extent=10, mesh_res=32, offset=0, verbose=False):
+    def get_zero_points(
+        self, t, extent=10, mesh_res=32, offset=0, verbose=False, device="cuda:0"
+    ):
         res = mesh_res
         bound = 1.0
         batch_size = 20000
@@ -154,12 +161,17 @@ class SDFModule(LightningModule):
             sidx, eidx = i, i + batch_size
             eidx = min(grid.shape[0], eidx)
             with torch.no_grad():
-                xyz = torch.from_numpy(grid[sidx:eidx, :]).float().cuda().view(1, -1, 3)
+                xyz = (
+                    torch.from_numpy(grid[sidx:eidx, :])
+                    .float()
+                    .to(device)
+                    .view(1, -1, 3)
+                )
                 # concat time to 'xyz - offset' and feed in to the network
                 inp = torch.cat(
                     (
                         xyz - offset,
-                        torch.ones((xyz.shape[0], xyz.shape[1], 1)).cuda() * t,
+                        torch.ones((xyz.shape[0], xyz.shape[1], 1)).to(device) * t,
                     ),
                     dim=2,
                 )

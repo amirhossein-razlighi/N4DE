@@ -15,7 +15,7 @@ import utils
 seed_everything(42)
 
 class Renderer:
-    def __init__(self, num_views, res, fname=None, scale=1.75):
+    def __init__(self, num_views, res, fname=None, scale=1.75, device='cuda:0'):
         self.num_views = num_views
         self.num_views = num_views
         self.res = res
@@ -25,7 +25,7 @@ class Renderer:
         self.lightdir = []
 
         self.glctx = dr.RasterizeGLContext()
-        self.zero_tensor = torch.as_tensor(0.0, dtype=torch.float32, device='cuda')
+        self.zero_tensor = torch.as_tensor(0.0, dtype=torch.float32, device=device)
         proj  = utils.projection(x=0.5, n=1.5, f=100.0)
         self.fov_x = np.rad2deg(2 * np.arctan(0.5))
 
@@ -47,17 +47,17 @@ class Renderer:
             self.mvs.append(r_mv)
             r_mvp = np.matmul(proj, r_mv).astype(np.float32)
             self.r_mvp.append(r_mvp)
-            r_campos = torch.as_tensor(np.linalg.inv(r_mv)[:3, 3], dtype=torch.float32, device='cuda')
+            r_campos = torch.as_tensor(np.linalg.inv(r_mv)[:3, 3], dtype=torch.float32, device=device)
             lightdir = -r_campos / torch.norm(r_campos)
             self.lightdir.append(lightdir)
 
-        proj = torch.as_tensor(proj, dtype=torch.float32, device='cuda')
-        self.view_mats = torch.as_tensor(np.array(self.mvs), dtype=torch.float32, device='cuda')
+        proj = torch.as_tensor(proj, dtype=torch.float32, device=device)
+        self.view_mats = torch.as_tensor(np.array(self.mvs), dtype=torch.float32, device=device)
         self.lightdir = torch.stack(self.lightdir)
         self.mvps = proj @ self.view_mats
-        self.render_target(fname)
+        self.render_target(fname, device)
 
-    def render_target(self, fname):
+    def render_target(self, fname, device='cuda:0'):
         # Load Mesh
         if fname is not None:
             mesh = trimesh.load_mesh(fname)
@@ -72,20 +72,20 @@ class Renderer:
 
         normals = mesh.vertex_normals
         normals = torch.as_tensor(normals, dtype=torch.float32,\
-                device='cuda').contiguous()
+                device=device).contiguous()
 
-        v = torch.as_tensor(mesh.vertices, dtype=torch.float32, device='cuda').contiguous()
+        v = torch.as_tensor(mesh.vertices, dtype=torch.float32, device=device).contiguous()
         f = torch.as_tensor(mesh.faces, dtype=torch.int32,\
-                device='cuda').contiguous()
+                device=device).contiguous()
 
-        self.target_imgs = self.render(v, f, normals)
+        self.target_imgs = self.render(v, f, normals, device)
 
-    def render_pointlight(self, pos, pos_idx, normals):
+    def render_pointlight(self, pos, pos_idx, normals, device='cuda:0'):
         v_hom = torch.nn.functional.pad(pos, (0,1), 'constant', 1.0)
         v_ndc = torch.matmul(v_hom, self.mvps.transpose(1,2))
         rast, depth = dr.rasterize(self.glctx, v_ndc, pos_idx, [self.res,
             self.res])
-        v_cols = torch.zeros_like(pos)
+        v_cols = torch.zeros_like(pos).to(device)
 
         pixel_normals = dr.interpolate(normals[None, ...], rast, pos_idx)[0]
         diffuse = self.albedo * torch.sum(-self.lightdir.view(-1, 1, 1, 3) * pixel_normals, -1, keepdim=True)
@@ -101,8 +101,8 @@ class Renderer:
 
         return torch.nan_to_num(result)
 
-    def render(self, pos, pos_idx, normals):
-        return self.render_pointlight(pos, pos_idx, normals)
+    def render(self, pos, pos_idx, normals, device='cuda:0'):
+        return self.render_pointlight(pos, pos_idx, normals, device)
 
 if __name__ == '__main__':
     R = Renderer(10, 1024, fname='data/Anim_1/3.obj')
