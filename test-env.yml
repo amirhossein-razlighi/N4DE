@@ -21,4 +21,5 @@ dependencies:
   - scipy==1.5.3
   - trimesh==3.9.3
   - moviepy
+  - tensorboard
 

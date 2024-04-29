@@ -53,10 +53,10 @@ def img_loss(
     count = 0
     images = imgs
     imgs = images[:, :, :, :3]
-    # depths = images[:, :, :, 3]
+    depths = images[:, :, :, 3]
     targets = target_imgs
     target_imgs = targets[:, :, :, :3]
-    # target_depths = targets[:, :, :, 3]
+    target_depths = targets[:, :, :, 3]
 
     for i in range(imgs.shape[0]):
         count += 1
@@ -74,10 +74,8 @@ def img_loss(
                 current_gt = down_gt
 
                 loss = loss + (current_est - current_gt).square().mean() / (j + 1)
-
-    if include_depth:
-        lambda_ = config.lambda_depth
-        loss += (depths - target_depths).square().mean() * lambda_
+        if include_depth:
+            loss += (depths[i] - target_depths[i]).square().mean() * config.lambda_depth
     loss = loss / count
     return loss
 
@@ -112,7 +110,6 @@ def main(config):
         dim=4, out_dim=1, hidden_size=512, n_blocks=4, z_dim=1, const=60.0
     )
     f = config.init_ckpt
-    # f = None
     module = SDFModule(cfg=model_cfg, f=f, save_dir=config.expdir, device=device).to(
         device
     )
@@ -130,7 +127,10 @@ def main(config):
     if config.num_frames is None:
         config.num_frames = 1
 
-    qbar = tqdm(range(config.epochs))
+    if config._continue:
+        qbar = tqdm(range(config.last_epoch, config.epochs))
+    else:
+        qbar = tqdm(range(config.epochs))
     best_loss = np.inf
 
     gt_sdf = torch.zeros(config.max_v, 1).to(device)
@@ -154,9 +154,10 @@ def main(config):
             mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
 
         images = []
+        depths = []
         video_tensor = torch.zeros((config.num_frames, 3, config.res, config.res))
         # Iterating over frames (in one epoch)
-        for t in range(config.num_frames):
+        for t in range(local_rank, config.num_frames, dist.get_world_size()):
             qbar.set_postfix_str(f"Frame: {t}")
 
             with torch.no_grad():
@@ -175,11 +176,13 @@ def main(config):
                     device=device,
                 )
                 target_imgs = R.target_imgs
+                target_depths = target_imgs[..., 3]
 
             t = t / 10
             logger.add_image(
-                f"target_{t}", target_imgs[-1].permute(2, 0, 1).clamp(0, 1)
+                f"target_{t}", target_imgs[-1][..., :3].permute(2, 0, 1).clamp(0, 1)
             )
+            logger.add_image(f"target_depth_{t}", target_depths[-1].unsqueeze(0))
 
             with torch.no_grad():
                 vertices_np, faces_np = module.module.get_zero_points(
@@ -203,9 +206,17 @@ def main(config):
                 vertices[:v, :3], faces[:f], face_normals
             )
             imgs = R.render(vertices[:v, :3], faces[:f], vertex_normals, device=device)
-            images.append(imgs[-1])
+            images.append(imgs[-1][..., :3])
+            depths.append(imgs[-1][..., 3])
             # Computing E
-            loss = img_loss(imgs, target_imgs, multi_scale=True, device=device)
+            loss = img_loss(
+                imgs,
+                target_imgs,
+                multi_scale=True,
+                device=device,
+                config=config,
+                include_depth=config.include_depth,
+            )
             loss = loss + laplace_lam * laplacian_loss
             loss.backward()
             logger.add_scalar("image loss", loss.item(), global_step=e)
@@ -289,6 +300,11 @@ def main(config):
             logger.add_image(
                 "est",
                 grid,
+                global_step=(e),
+            )
+            logger.add_image(
+                "est_depth",
+                make_grid(depths[0].unsqueeze(0)),
                 global_step=(e),
             )
         if e % config.mesh_log_freq == 0:

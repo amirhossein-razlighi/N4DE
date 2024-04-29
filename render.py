@@ -94,10 +94,10 @@ class Renderer:
                     rast, v_ndc, pos_idx)
         
         # Normalize depth to [0, 1] range
-        # depth = (depth - depth.min()) / (depth.max() - depth.min())
-        # depth = torch.where(rast[..., -1:] != 0, depth, self.zero_tensor)
+        depth = (depth - depth.min()) / (depth.max() - depth.min())
+        # depth = dr.antialias(depth, rast, v_ndc, pos_idx)
 
-        # result = torch.cat([result, depth], dim=-1)
+        result = torch.cat([result, depth], dim=-1)
 
         return torch.nan_to_num(result)
 

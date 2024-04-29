@@ -97,26 +97,26 @@ class SDFModule(LightningModule):
         super().__init__()
         self.synthesis_nw = Net("", cfg).to(device)
         if f is not None:
-            # Uncomment if you need to load from 'sphere'
-            state_dict = torch.load(f)["net"]
+            if f.endswith("sphere.pt"):
+                state_dict = torch.load(f)["net"]
+                for key in state_dict.keys():
+                    state_dict[key] = state_dict[key].to(device)
+                # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
+                # which is [512, 3] so it become [512, 4]
+                state_dict[f"blocks.0.weight"] = torch.cat(
+                    (state_dict[f"blocks.0.weight"], torch.rand(512, 1).to(device)),
+                    dim=1,
+                )
+                self.synthesis_nw.load_state_dict(state_dict)
+            else:
+                state_dict = torch.load(f)
+                new_state_dict = {}
+                for key in state_dict.keys():
+                    where_ = key.find("block")
+                    new_state_dict[key[where_:]] = state_dict[key]
+                self.synthesis_nw.load_state_dict(new_state_dict)
 
-            for key in state_dict.keys():
-                state_dict[key] = state_dict[key].to(device)
-
-            # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
-            # which is [512, 3] so it become [512, 4]
-            state_dict[f"blocks.0.weight"] = torch.cat(
-                (state_dict[f"blocks.0.weight"], torch.rand(512, 1).to(device)), dim=1
-            )
-            self.synthesis_nw.load_state_dict(state_dict)
             self.save_dir = save_dir
-
-            # In case you need to load from a specific checkpoint
-            # state_dict = torch.load(f)
-            # new_state_dict = {}
-            # for key in state_dict.keys():
-            #     new_state_dict[key[13:]] = state_dict[key]
-            # self.synthesis_nw.load_state_dict(new_state_dict)
 
         self.in_features = in_features
 

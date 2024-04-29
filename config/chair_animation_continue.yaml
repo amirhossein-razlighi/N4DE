@@ -1,13 +1,14 @@
 exp: "Chair_Deform_Animation"
-init_ckpt: data/sphere.pt
+init_ckpt: "logs/2_Chair_Deform_Animation/best.ckpt"
+folder_name: "2_Chair_Deform_Animation"
 mesh: "data/Chair_Deform/"
 logdir: "logs/"
-folder_name: 
-_continue: False
+_continue: True
 
 num_frames: 3
 num_views: 100 # 100
 res: 256 # 256
+last_epoch: 2300
 epochs: 3000 # 3000
 iters: 1 # 1
 batch_size: 16384 #8192
@@ -24,8 +25,6 @@ num_vol_points: 16384
 weight_decay: 0.1
 lr: 0.000002 # 0.000002
 scale: 1.7
-lambda_depth: 0.25
-include_depth: True
 
 video_log_freq: 1
 img_log_freq: 50
