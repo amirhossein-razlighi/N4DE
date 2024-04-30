@@ -100,6 +100,7 @@ def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
 
 
 def main(config):
+    os.environ["NCCL_BLOCKING_WAIT"] = "1"
     dist.init_process_group(
         backend="nccl",
     )
@@ -140,6 +141,25 @@ def main(config):
     faces = torch.empty((config.max_v, 3), dtype=torch.int32).to(device)
     vertices.requires_grad_()
 
+    # First, we render the views and get the target images and store renderers
+    renders = []
+    for t in range(config.num_frames):
+        with torch.no_grad():
+            # Comment the code below, unless you run for Anim_1/
+            # if t == 0:
+            #     name = f"{t}.obj"
+            # else:
+            #     name = f"{t}.ply"
+            name = f"{t + 1}.ply"
+            R = Renderer(
+                config.num_views,
+                config.res,
+                fname=config.mesh + name,
+                scale=config.scale,
+                device=device,
+            )
+            renders.append(R)
+
     for e in qbar:
         qbar.set_description(f"Epoch {e}")
 
@@ -160,23 +180,9 @@ def main(config):
         for t in range(local_rank, config.num_frames, dist.get_world_size()):
             qbar.set_postfix_str(f"Frame: {t}")
 
-            with torch.no_grad():
-                name = f"{t+1}.ply"
-                # Comment the code below, unless you run for Anim_1/
-                # if t == 0:
-                #     name = f"{t}.obj"
-                # else:
-                #     name = f"{t}.ply"
-
-                R = Renderer(
-                    config.num_views,
-                    config.res,
-                    fname=config.mesh + name,
-                    scale=config.scale,
-                    device=device,
-                )
-                target_imgs = R.target_imgs
-                target_depths = target_imgs[..., 3]
+            R = renders[t]
+            target_imgs = R.target_imgs
+            target_depths = target_imgs[..., 3]
 
             t = t / 10
             logger.add_image(
@@ -199,7 +205,8 @@ def main(config):
 
             edges = compute_edges(vertices[:v, :3], faces[:f])
             L = laplacian_simple(vertices[:v, :3], edges.long())
-            laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
+            # laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
+            laplacian_loss = torch.trace(((L @ vertices[:v, :3]).T @ vertices[:v, :3]))
 
             face_normals = compute_face_normals(vertices[:v, :3], faces[:f])
             vertex_normals = compute_vertex_normals(
@@ -268,6 +275,9 @@ def main(config):
 
                     # d_Phi / d_t
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
+                    loss += (
+                        normals[min_i:max_i, 3].abs().mean() / n_batches
+                    )  # d phi/ dt term for morphing
 
                     # term for morphing
                     # d_phi/dt * <grad(phi), F>
@@ -280,6 +290,7 @@ def main(config):
                     logger.add_scalar("loss", loss.item(), global_step=e)
                     idx += config.batch_size
                 # update the parameters
+                dist.barrier()  # wait for all processes to finish
                 optimizer.step()
 
         if e % config.video_log_freq == 0:

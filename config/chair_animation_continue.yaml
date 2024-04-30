@@ -1,14 +1,14 @@
 exp: "Chair_Deform_Animation"
-init_ckpt: "logs/2_Chair_Deform_Animation/best.ckpt"
-folder_name: "2_Chair_Deform_Animation"
+init_ckpt: "logs/3_Chair_Deform_Animation/iter_0002900.ckpt"
+folder_name: "3_Chair_Deform_Animation"
 mesh: "data/Chair_Deform/"
 logdir: "logs/"
 _continue: True
 
-num_frames: 3
+num_frames: 2
 num_views: 100 # 100
 res: 256 # 256
-last_epoch: 2300
+last_epoch: 1688
 epochs: 3000 # 3000
 iters: 1 # 1
 batch_size: 16384 #8192
