@@ -1,6 +1,6 @@
 exp: "Chair_Deform_Animation"
-init_ckpt: "logs/3_Chair_Deform_Animation/iter_0002900.ckpt"
-folder_name: "3_Chair_Deform_Animation"
+init_ckpt: "logs/4_Chair_Deform_Animation/iter_0002900.ckpt"
+folder_name: "4_Chair_Deform_Animation"
 mesh: "data/Chair_Deform/"
 logdir: "logs/"
 _continue: True
