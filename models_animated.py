@@ -104,7 +104,7 @@ class SDFModule(LightningModule):
                 # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
                 # which is [512, 3] so it become [512, 4]
                 state_dict[f"blocks.0.weight"] = torch.cat(
-                    (state_dict[f"blocks.0.weight"], torch.rand(512, 1).to(device)),
+                    (state_dict[f"blocks.0.weight"], torch.zeros(512, 1).to(device)),
                     dim=1,
                 )
                 self.synthesis_nw.load_state_dict(state_dict)
