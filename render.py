@@ -94,6 +94,9 @@ class Renderer:
     def render_pointlight(self, pos, pos_idx, normals, device="cuda:0"):
         v_hom = torch.nn.functional.pad(pos, (0, 1), "constant", 1.0)
         v_ndc = torch.matmul(v_hom, self.mvps.transpose(1, 2))
+        depth_ = v_ndc[..., 2]
+        depth = depth_.unsqueeze(-1).contiguous()
+
         rast, _ = dr.rasterize(self.glctx, v_ndc, pos_idx, [self.res, self.res])
         v_cols = torch.zeros_like(pos).to(device)
 
@@ -107,13 +110,9 @@ class Renderer:
             v_ndc,
             pos_idx,
         )
-
-        # Computing depth image
-        depth = dr.interpolate(v_ndc[..., 2:3], rast, pos_idx)
-        depth = torch.where(rast[..., -1:] != 0, depth, self.zero_tensor)
-        depth = (depth - depth.min()) / (depth.max() - depth.min())
-        result = torch.cat([result, depth], dim=-1)
-
+        depth_map, _ = dr.interpolate(depth, rast, pos_idx)
+        result = result.repeat(1, 1, 1, 3)  # make it RGB
+        result = torch.cat([result, depth_map], -1)  # add depth channel
         return torch.nan_to_num(result)
 
     def render(self, pos, pos_idx, normals, device="cuda:0"):
@@ -130,5 +129,5 @@ if __name__ == "__main__":
         )
         utils.save_image(
             f"data/test_render/{i:06d}_depth.png",
-            R.target_imgs[i, :, :, 3].detach().cpu().numpy(),
+            R.target_imgs[i, :, :, -1].detach().cpu().numpy(),
         )
