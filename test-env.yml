@@ -4,16 +4,18 @@ channels:
   - conda-forge
 
 dependencies:
-  - python=3.9
+  - python=3.8
   - numpy==1.22.2
   - pytorch
   - torchvision
   - pytorch-cuda=12.1
+  - pytorch-lightning==1.6.0
+  - cuda-toolkit
 # - libigl==2.4.1
+  - igl==2.2.1
   - imageio==2.9.0
   - Pillow==9.2.0
   - plyfile==0.7.4
-  - pytorch-lightning==1.6.0
   - tensorboard
   - PyYAML==6.0
   - scikit-image==0.18.2
