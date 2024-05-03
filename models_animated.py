@@ -2,7 +2,7 @@ import pdb
 import numpy as np
 import torch
 import torch.nn as nn
-from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning import LightningModule
 from utils import *
 
 

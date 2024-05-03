@@ -12,13 +12,13 @@
 #SBATCH --gpus=l4-24g:2         # Request 2 GPUs of model L4
 
 srun -- mkenv -f /home/amirhossein_razlighi/codes/NIE_Animated/test-env.yml -- \
-bash -c "
+/usr/bin/sh -c "
 export IMAGEIO_FFMPEG_EXE="/usr/bin/ffmpeg" && \
 pip uninstall nvdiffrast -y && \
 cd nvdiffrast/ && \
 pip install . && \
 cd .. && \
-torchrun --standalone --nproc_per_node=2 main_animated.py --config ./config/animation_deform.yaml"
+torchrun --standalone --nproc_per_node=2 main_distributed.py --config ./config/animation_deform.yaml"
 
 # export CC=/usr/bin/gcc-12 && \
 # export CXX=/usr/bin/g++-12 && \

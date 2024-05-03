@@ -1,48 +1,10 @@
-DEPRECATION: pytorch-lightning 1.6.0 has a non-standard dependency specifier torch>=1.8.*. pip 24.1 will enforce this behaviour change. A possible replacement is to upgrade to a newer version of pytorch-lightning or contact the author to suggest that they release a version with a conforming dependency specifiers. Discussion can be found at https://github.com/pypa/pip/issues/12063
-Global seed set to 42
-  0%|          | 0/3 [00:00<?, ?it/s]/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
-If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
-  warnings.warn(
-/home/amirhossein_razlighi/codes/NIE_Animated/render.py:83: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /opt/conda/conda-bld/pytorch_1712608851799/work/torch/csrc/utils/tensor_numpy.cpp:206.)
-  normals = torch.as_tensor(
-/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
-If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
-  warnings.warn(
-[rank0]: Traceback (most recent call last):
-[rank0]:   File "main_animated.py", line 485, in <module>
-[rank0]:     main(config)
-[rank0]:   File "main_animated.py", line 167, in main
-[rank0]:     renderers_tensor = torch.stack(renderers)
-[rank0]: TypeError: expected Tensor as element 0 in argument 0, but got Renderer
-  0%|          | 0/3 [01:01<?, ?it/s]
-E0501 13:19:12.286026 139710130042688 torch/distributed/elastic/multiprocessing/api.py:826] failed (exitcode: 1) local_rank: 0 (pid: 760170) of binary: /scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/bin/python
-Traceback (most recent call last):
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/bin/torchrun", line 33, in <module>
-    sys.exit(load_entry_point('torch==2.3.0', 'console_scripts', 'torchrun')())
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 347, in wrapper
-    return f(*args, **kwargs)
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/distributed/run.py", line 879, in main
-    run(args)
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/distributed/run.py", line 870, in run
-    elastic_launch(
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/distributed/launcher/api.py", line 132, in __call__
-    return launch_agent(self._config, self._entrypoint, list(args))
-  File "/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/distributed/launcher/api.py", line 263, in launch_agent
-    raise ChildFailedError(
-torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
-============================================================
-main_animated.py FAILED
-------------------------------------------------------------
-Failures:
-  <NO_OTHER_FAILURES>
-------------------------------------------------------------
-Root Cause (first observed failure):
-[0]:
-  time      : 2024-05-01_13:19:12
-  host      : gcpl4-eu-0.slurm.insait.ai
-  rank      : 0 (local_rank: 0)
-  exitcode  : 1 (pid: 760170)
-  error_file: <N/A>
-  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
-============================================================
-srun: error: gcpl4-eu-0: task 0: Exited with exit code 1
+W0503 08:39:54.439843 139976893245248 torch/distributed/run.py:757] 
+W0503 08:39:54.439843 139976893245248 torch/distributed/run.py:757] *****************************************
+W0503 08:39:54.439843 139976893245248 torch/distributed/run.py:757] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0503 08:39:54.439843 139976893245248 torch/distributed/run.py:757] *****************************************
+[rank: 0] Seed set to 42
+[rank: 1] Seed set to 42
+  0%|          | 0/5 [00:00<?, ?it/s]  0%|          | 0/5 [00:00<?, ?it/s]Lock file exists in build directory: '/scratch/amirhossein_razlighi/.cache/torch_extensions/py38_cu121/nvdiffrast_plugin_gl/lock'
+slurmstepd: error: *** JOB 31952 ON gcpl4-eu-2 CANCELLED AT 2024-05-03T08:41:36 ***
+slurmstepd: error: *** STEP 31952.0 ON gcpl4-eu-2 CANCELLED AT 2024-05-03T08:41:36 ***
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.

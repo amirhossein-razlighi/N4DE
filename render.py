@@ -8,7 +8,7 @@ import torch.nn as nn
 
 import nvdiffrast.torch as dr
 
-from pytorch_lightning.utilities.seed import seed_everything
+from pytorch_lightning import seed_everything
 from PIL import Image
 import utils
 

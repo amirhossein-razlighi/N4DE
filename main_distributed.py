@@ -8,6 +8,9 @@ from models_animated import SDFModule
 from render import Renderer
 from utils import *
 from tqdm import tqdm
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+from datetime import timedelta
 
 
 def gauss_kernel(size=5, device=torch.device("cuda:0"), channels=3):
@@ -78,14 +81,12 @@ def img_loss(
     return loss
 
 
-"""
-A loss function, doing this:
-for (a,b) -> df/dt + <grad(f), F> = 0
-for t=t_i -> f = g_i
-"""
-
-
 def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
+    """
+    A loss function, doing this:
+    for (a,b) -> df/dt + <grad(f), F> = 0
+    for t=t_i -> f = g_i
+    """
     grad = gradient(pred_sdf, vertices)
     df_dt = grad[:, 3]
     df_3d = grad[:, :3]
@@ -98,20 +99,27 @@ def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
 
 
 def main(config):
-    device = torch.device("cuda:0")
+    local_rank = dist.get_rank()
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
     model_cfg = Namespace(
         dim=4,
         out_dim=1,
-        hidden_size=512, # 512
+        hidden_size=512,
         n_blocks=4,
         z_dim=1,
         const=60.0,
     )
     f = config.init_ckpt
     model = SDFModule(cfg=model_cfg, f=f, save_dir=config.expdir, device=device).to(
-        device
+        local_rank
     )
-    logger = SummaryWriter(log_dir=config.expdir, flush_secs=5)
+    model = DDP(
+        model,
+        device_ids=[local_rank],
+    )
+    if local_rank == 0:
+        logger = SummaryWriter(log_dir=config.expdir, flush_secs=5)
 
     optimizer = torch.optim.Adam(
         list(model.parameters()), lr=config.lr, weight_decay=config.weight_decay
@@ -134,25 +142,28 @@ def main(config):
     vertices.requires_grad_()
 
     # First, we render the views and get the target images and store renderers
-    renderers = []
-    print("Rendering target images")
-    for t in range(config.num_frames):
-        with torch.no_grad():
-            # Comment the code below, unless you run for Anim_1/
-            # if t == 0:
-            #     name = f"{t}.obj"
-            # else:
-            #     name = f"{t}.ply"
-            name = f"{t + 1}.ply"
-            R = Renderer(
-                config.num_views,
-                config.res,
-                fname=config.mesh + name,
-                scale=config.scale,
-                device=device,
-            )
-            renderers.append(R)
-    print("Rendering done")
+    renderers = [None] * config.num_frames
+    if local_rank == 0:
+        print("Rendering target images")
+        for t in range(config.num_frames):
+            with torch.no_grad():
+                # Comment the code below, unless you run for Anim_1/
+                # if t == 0:
+                #     name = f"{t}.obj"
+                # else:
+                #     name = f"{t}.ply"
+                name = f"{t + 1}.ply"
+                R = Renderer(
+                    config.num_views,
+                    config.res,
+                    fname=config.mesh + name,
+                    scale=config.scale,
+                    device=device,
+                )
+                renderers[t] = R
+        print("Rendering done")
+        dist.broadcast_object_list(renderers, src=0)
+    dist.barrier()
 
     for e in qbar:
         qbar.set_description(f"Epoch {e}")
@@ -171,17 +182,18 @@ def main(config):
         depths = []
         video_tensor = torch.zeros((config.num_frames, 3, config.res, config.res))
         # Iterating over frames (in one epoch)
-        for t in range(config.num_frames):
+        for t in range(local_rank, config.num_frames, dist.get_world_size()):
             qbar.set_postfix_str(f"Frame: {t}")
             R = renderers[t]
             target_imgs = R.target_imgs
             target_depths = target_imgs[..., 3]
 
             t = t / 10
-            logger.add_image(
-                f"target_{t}", target_imgs[-1][..., :3].permute(2, 0, 1).clamp(0, 1)
-            )
-            logger.add_image(f"target_depth_{t}", target_depths[-1].unsqueeze(0))
+            if local_rank == 0:
+                logger.add_image(
+                    f"target_{t}", target_imgs[-1][..., :3].permute(2, 0, 1).clamp(0, 1)
+                )
+                logger.add_image(f"target_depth_{t}", target_depths[-1].unsqueeze(0))
 
             with torch.no_grad():
                 vertices_np, faces_np = model.module.get_zero_points(
@@ -219,7 +231,8 @@ def main(config):
             )
             loss = loss + laplace_lam * laplacian_loss
             loss.backward()
-            logger.add_scalar("image loss", loss.item(), global_step=e)
+            if local_rank == 0:
+                logger.add_scalar("image loss", loss.item(), global_step=e)
 
             if loss.item() < best_loss:
                 best_loss = loss.item()
@@ -246,11 +259,12 @@ def main(config):
                         normals[min_i:max_i] * dE_dx[min_i:max_i], dim=-1, keepdim=True
                     )
                 )
-                logger.add_scalar(
-                    "flow field magnitude",
-                    F[min_i:max_i].norm().item(),
-                    global_step=e,
-                )
+                if local_rank == 0:
+                    logger.add_scalar(
+                        "flow field magnitude",
+                        F[min_i:max_i].norm().item(),
+                        global_step=e,
+                    )
                 # Ground truth SDF = predicted SDF + epsilon * Flow field
                 gt_sdf[min_i:max_i] = (pred_sdf + config.eps * F[min_i:max_i]).detach()
                 idx += config.batch_size
@@ -280,46 +294,48 @@ def main(config):
                     # loss += F[min_i:max_i].abs().mean() / n_batches
 
                     loss.backward()
-                    logger.add_scalar("loss", loss.item(), global_step=e)
+                    if local_rank == 0:
+                        logger.add_scalar("loss", loss.item(), global_step=e)
                     idx += config.batch_size
                 # update the parameters
                 optimizer.step()
 
-        if e % config.video_log_freq == 0:
-            images = torch.stack(images)
-            video_tensor = images.permute(0, 3, 1, 2).unsqueeze(0)
-            logger.add_video(
-                "video",
-                video_tensor,
-                global_step=(e),
-                fps=10,
-            )
-        if e % config.img_log_freq == 0:
-            grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
-            for img in images[1:]:
-                grid = torch.cat(
-                    (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])),
-                    dim=2,
+        if local_rank == 0:
+            if e % config.video_log_freq == 0:
+                images = torch.stack(images)
+                video_tensor = images.permute(0, 3, 1, 2).unsqueeze(0)
+                logger.add_video(
+                    "video",
+                    video_tensor,
+                    global_step=(e),
+                    fps=10,
                 )
-            logger.add_image(
-                "est",
-                grid,
-                global_step=(e),
-            )
-            logger.add_image(
-                "est_depth",
-                make_grid(depths[0].unsqueeze(0)),
-                global_step=(e),
-            )
-        if e % config.mesh_log_freq == 0:
-            with torch.no_grad():
-                mse = (imgs - target_imgs).square().mean()
-                psnr = -10.0 * torch.log10(mse)
-                logger.add_scalar("psnr", psnr, global_step=(e))
-            mesh = trimesh.Trimesh(vertices_np, faces_np)
-            cd = compute_trimesh_chamfer(R.mesh, mesh)
-            logger.add_scalar("cd", cd, global_step=(e))
-            mesh.export(f"{config.expdir}/mesh_{(e):07d}.ply")
+            if e % config.img_log_freq == 0:
+                grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
+                for img in images[1:]:
+                    grid = torch.cat(
+                        (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])),
+                        dim=2,
+                    )
+                logger.add_image(
+                    "est",
+                    grid,
+                    global_step=(e),
+                )
+                logger.add_image(
+                    "est_depth",
+                    make_grid(depths[0].unsqueeze(0)),
+                    global_step=(e),
+                )
+            if e % config.mesh_log_freq == 0:
+                with torch.no_grad():
+                    mse = (imgs - target_imgs).square().mean()
+                    psnr = -10.0 * torch.log10(mse)
+                    logger.add_scalar("psnr", psnr, global_step=(e))
+                mesh = trimesh.Trimesh(vertices_np, faces_np)
+                cd = compute_trimesh_chamfer(R.mesh, mesh)
+                logger.add_scalar("cd", cd, global_step=(e))
+                mesh.export(f"{config.expdir}/mesh_{(e):07d}.ply")
         if e % config.ckpt_log_freq == 0:
             torch.save(
                 model.state_dict(),
@@ -458,4 +474,8 @@ def old_iteration():
 if __name__ == "__main__":
     # with torch.autograd.set_detect_anomaly(True):
     config = parse_config(create_dir=True, consider_max_dir=True)
+    dist.init_process_group(
+        backend="nccl",
+        timeout=timedelta(hours=7),
+    )
     main(config)

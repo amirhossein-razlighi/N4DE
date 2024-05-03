@@ -69,7 +69,6 @@ def parse_config(suffix="", create_dir=True, consider_max_dir=False):
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, help="Config file")
     parser.add_argument("--test_mesh", type=str, help="Test Mesh", default=None)
-    # parser.add_argument("--local-rank", type=int, default=0)
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -95,7 +94,6 @@ def parse_config(suffix="", create_dir=True, consider_max_dir=False):
     if create_dir:
         os.makedirs(config.expdir, exist_ok=True)
 
-    # config.local_rank = args.local_rank
     return config
 
 

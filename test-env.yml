@@ -9,7 +9,7 @@ dependencies:
   - pytorch
   - torchvision
   - pytorch-cuda=12.1
-  - pytorch-lightning==1.6.0
+  - pytorch-lightning
   - cuda-toolkit
 # - libigl==2.4.1
   - igl==2.2.1
