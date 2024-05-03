@@ -81,13 +81,15 @@ class Renderer:
 
         normals = mesh.vertex_normals
         normals = torch.as_tensor(
-            normals, dtype=torch.float32, device=device
+            np.copy(normals), dtype=torch.float32, device=device
         ).contiguous()
 
         v = torch.as_tensor(
-            mesh.vertices, dtype=torch.float32, device=device
+            np.copy(mesh.vertices), dtype=torch.float32, device=device
         ).contiguous()
-        f = torch.as_tensor(mesh.faces, dtype=torch.int32, device=device).contiguous()
+        f = torch.as_tensor(
+            np.copy(mesh.faces), dtype=torch.int32, device=device
+        ).contiguous()
 
         self.target_imgs = self.render(v, f, normals, device)
 
