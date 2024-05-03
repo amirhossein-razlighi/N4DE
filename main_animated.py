@@ -184,7 +184,7 @@ def main(config):
             logger.add_image(f"target_depth_{t}", target_depths[-1].unsqueeze(0))
 
             with torch.no_grad():
-                vertices_np, faces_np = model.module.get_zero_points(
+                vertices_np, faces_np = model.get_zero_points(
                     mesh_res=mesh_res, t=t, device=device
                 )
                 v = vertices_np.shape[0]
@@ -360,7 +360,7 @@ def old_iteration():
                 laplace_lam = config.max_laplace_lam
                 mesh_res = config.mesh_res_base + np.random.randint(low=-3, high=3)
             with torch.no_grad():
-                vertices_np, faces_np = model.module.get_zero_points(
+                vertices_np, faces_np = model.get_zero_points(
                     mesh_res=mesh_res, t=t, device=device
                 )
                 v = vertices_np.shape[0]
