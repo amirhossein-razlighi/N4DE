@@ -143,27 +143,24 @@ def main(config):
 
     # First, we render the views and get the target images and store renderers
     renderers = [None] * config.num_frames
-    if local_rank == 0:
-        print("Rendering target images")
-        for t in range(config.num_frames):
-            with torch.no_grad():
-                # Comment the code below, unless you run for Anim_1/
-                # if t == 0:
-                #     name = f"{t}.obj"
-                # else:
-                #     name = f"{t}.ply"
-                name = f"{t + 1}.ply"
-                R = Renderer(
-                    config.num_views,
-                    config.res,
-                    fname=config.mesh + name,
-                    scale=config.scale,
-                    device=device,
-                )
-                renderers[t] = R
-        print("Rendering done")
-        dist.broadcast_object_list(renderers, src=0)
-    dist.barrier()
+    print(f"[rank {local_rank}] Rendering target images")
+    for t in range(config.num_frames):
+        with torch.no_grad():
+            # Comment the code below, unless you run for Anim_1/
+            # if t == 0:
+            #     name = f"{t}.obj"
+            # else:
+            #     name = f"{t}.ply"
+            name = f"{t + 1}.ply"
+            R = Renderer(
+                config.num_views,
+                config.res,
+                fname=config.mesh + name,
+                scale=config.scale,
+                device=device,
+            )
+            renderers[t] = R
+    print(f"[rank {local_rank}] Rendering done")
 
     for e in qbar:
         qbar.set_description(f"Epoch {e}")
@@ -341,6 +338,8 @@ def main(config):
                 model.state_dict(),
                 f"{config.expdir}/iter_{(e):07d}.ckpt",
             )
+
+        dist.barrier()
 
 
 def old_iteration():
