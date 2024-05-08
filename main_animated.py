@@ -198,8 +198,8 @@ def main(config):
 
             edges = compute_edges(vertices[:v, :3], faces[:f])
             L = laplacian_simple(vertices[:v, :3], edges.long())
-            # laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
-            laplacian_loss = torch.trace(((L @ vertices[:v, :3]).T @ vertices[:v, :3]))
+            laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
+            # laplacian_loss = torch.trace(((L @ vertices[:v, :3]).T @ vertices[:v, :3]))
 
             face_normals = compute_face_normals(vertices[:v, :3], faces[:f])
             vertex_normals = compute_vertex_normals(
@@ -286,8 +286,8 @@ def main(config):
                 optimizer.step()
 
         if e % config.video_log_freq == 0:
-            images = torch.stack(images)
-            video_tensor = images.permute(0, 3, 1, 2).unsqueeze(0)
+            images_ = torch.stack(images)
+            video_tensor = images_.permute(0, 3, 1, 2).unsqueeze(0)
             logger.add_video(
                 "video",
                 video_tensor,
@@ -295,20 +295,26 @@ def main(config):
                 fps=10,
             )
         if e % config.img_log_freq == 0:
-            grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
+            est_grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
+            depth_grid = make_grid(depths[0].unsqueeze(0).clamp(0, 1))
             for img in images[1:]:
-                grid = torch.cat(
-                    (grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])),
+                est_grid = torch.cat(
+                    (est_grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])),
+                    dim=2,
+                )
+            for depth in depths[1:]:
+                depth_grid = torch.cat(
+                    (depth_grid, make_grid(depth.unsqueeze(0).clamp(0, 1))),
                     dim=2,
                 )
             logger.add_image(
                 "est",
-                grid,
+                est_grid,
                 global_step=(e),
             )
             logger.add_image(
                 "est_depth",
-                make_grid(depths[0].unsqueeze(0)),
+                depth_grid,
                 global_step=(e),
             )
         if e % config.mesh_log_freq == 0:
