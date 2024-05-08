@@ -1,18 +1,20 @@
-exp: "Animated"
+exp: "Animation1"
 init_ckpt: data/sphere.pt
-mesh: "data/Anim_1/"
+mesh: "data/Animation_1/"
 logdir: "logs/"
+folder_name: 
+_continue: False
 
-num_frames: 3  #5
-num_views: 100
-res: 256
+num_frames: 3
+num_views: 100 # 100
+res: 256 # 256
 epochs: 3000 # 3000
 iters: 1 # 1
-batch_size: 8192 #8192
+batch_size: 32768 # 16384
 eps: 0.0001 # 0.0001
 mesh_res_base: 150
 mesh_res_limit: 200
-fine_e: 2000 # 1000
+fine_e: 1500 # 1000
 max_v: 3000000
 lambda_: 100
 max_laplace_lam: 0.0001 # 0.0
@@ -22,8 +24,11 @@ num_vol_points: 16384
 weight_decay: 0.1
 lr: 0.000002 # 0.000002
 scale: 1.7
+lambda_depth: 0.25
+include_depth: True
 
-img_log_freq: 100
+video_log_freq: 1
+img_log_freq: 50
 mesh_log_freq: 50
 ckpt_log_freq: 100
 

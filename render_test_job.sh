@@ -12,12 +12,12 @@
 #SBATCH --gpus=l4-24g:1      # Request 1 GPU of model L4
 
 srun -- mkenv -f /home/amirhossein_razlighi/codes/NIE_Animated/test-env.yml -- \
-bash -c \
-"export IMAGEIO_FFMPEG_EXE="/usr/bin/ffmpeg" && \
+/usr/bin/sh -c \
+"export IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg && \
 cd nvdiffrast/ && \
 pip install . && \
 cd .. && \
-python3 render_a_mesh.py"
+python3 render_a_checkpoint.py --num_frames 3 --checkpoint /home/amirhossein_razlighi/codes/NIE_Animated/logs/8_Chair_Deform_Animation_Complete/best.ckpt --output_dir /home/amirhossein_razlighi/codes/NIE_Animated/renders/Chair_deform/ --mesh_dir /home/amirhossein_razlighi/codes/NIE_Animated/data/Chair_Deform"
 
 # python3 render.py
 # export CC=/usr/bin/gcc-12 && \

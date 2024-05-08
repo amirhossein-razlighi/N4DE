@@ -1,14 +1,7 @@
-DEPRECATION: pytorch-lightning 1.6.0 has a non-standard dependency specifier torch>=1.8.*. pip 24.1 will enforce this behaviour change. A possible replacement is to upgrade to a newer version of pytorch-lightning or contact the author to suggest that they release a version with a conforming dependency specifiers. Discussion can be found at https://github.com/pypa/pip/issues/12063
-Global seed set to 42
-/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+[rank: 0] Seed set to 42
+/scratch/amirhossein_razlighi/micromamba/envs/auto-ys3zyedhdso6/lib/python3.9/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
 If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
   warnings.warn(
-/home/amirhossein_razlighi/codes/NIE_Animated/render.py:83: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /opt/conda/conda-bld/pytorch_1712608851799/work/torch/csrc/utils/tensor_numpy.cpp:206.)
-  normals = torch.as_tensor(
-/scratch/amirhossein_razlighi/micromamba/envs/auto-6gqn3lelzmr7/lib/python3.8/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
+/scratch/amirhossein_razlighi/micromamba/envs/auto-ys3zyedhdso6/lib/python3.9/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
 If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
   warnings.warn(
-/home/amirhossein_razlighi/codes/NIE_Animated/utils.py:299: UserWarning: Using torch.cross without specifying the dim arg is deprecated.
-Please either pass the dim explicitly or simply use torch.linalg.cross.
-The default value of dim will change to agree with that of linalg.cross in a future release. (Triggered internally at /opt/conda/conda-bld/pytorch_1712608851799/work/aten/src/ATen/native/Cross.cpp:62.)
-  c = torch.cross(v[1] - v[0], v[2] - v[0])
