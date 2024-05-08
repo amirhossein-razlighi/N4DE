@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     for frame_num in range(args.num_frames):
         with torch.no_grad():
-            vertices_np, faces_np = model.get_zero_points(t=frame_num)
+            vertices_np, faces_np = model.get_zero_points(t=frame_num / 10.)
             v = vertices_np.shape[0]
             f = faces_np.shape[0]
             vertices.data[:v] = torch.from_numpy(vertices_np)
@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 f"{args.output_dir}/{frame_num:06d}_gt.png",
                 renderers[frame_num].target_imgs[0, ..., :3].detach().cpu().numpy(),
             )
-            est_images = renderer[frame_num].render(
+            est_imgs = renderers[frame_num].render(
                 vertices[:v], faces[:f], vertex_normals
             )
 
