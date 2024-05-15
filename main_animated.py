@@ -102,7 +102,7 @@ def main(config):
     model_cfg = Namespace(
         dim=4,
         out_dim=1,
-        hidden_size=512, # 512
+        hidden_size=512,
         n_blocks=4,
         z_dim=1,
         const=60.0,
@@ -133,26 +133,25 @@ def main(config):
     faces = torch.empty((config.max_v, 3), dtype=torch.int32).to(device)
     vertices.requires_grad_()
 
-    # First, we render the views and get the target images and store renderers
-    renderers = []
-    print("Rendering target images")
-    for t in range(config.num_frames):
-        with torch.no_grad():
-            # Comment the code below, unless you run for Anim_1/
-            # if t == 0:
-            #     name = f"{t}.obj"
-            # else:
-            #     name = f"{t}.ply"
-            name = f"{t + 1}.ply"
-            R = Renderer(
-                config.num_views,
-                config.res,
-                fname=config.mesh + name,
-                scale=config.scale,
-                device=device,
-            )
-            renderers.append(R)
-    print("Rendering done")
+    # renderers = []
+    # print("Rendering target images")
+    # for t in range(config.num_frames):
+    #     with torch.no_grad():
+    #         # Comment the code below, unless you run for Anim_1/
+    #         # if t == 0:
+    #         #     name = f"{t}.obj"
+    #         # else:
+    #         #     name = f"{t}.ply"
+    #         name = f"{t + 1}.ply"
+    #         R = Renderer(
+    #             config.num_views,
+    #             config.res,
+    #             fname=config.mesh + name,
+    #             scale=config.scale,
+    #             device=device,
+    #         )
+    #         renderers.append(R)
+    # print("Rendering done")
 
     for e in qbar:
         qbar.set_description(f"Epoch {e}")
@@ -173,7 +172,17 @@ def main(config):
         # Iterating over frames (in one epoch)
         for t in range(config.num_frames):
             qbar.set_postfix_str(f"Frame: {t}")
-            R = renderers[t]
+            # R = renderers[t]
+
+            with torch.no_grad():
+                name = f"{t + 1}.ply"
+                R = Renderer(
+                    config.num_views,
+                    config.res,
+                    fname=config.mesh + name,
+                    scale=config.scale,
+                    device=device,
+                )
             target_imgs = R.target_imgs
             target_depths = target_imgs[..., 3]
 
@@ -199,7 +208,6 @@ def main(config):
             edges = compute_edges(vertices[:v, :3], faces[:f])
             L = laplacian_simple(vertices[:v, :3], edges.long())
             laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
-            # laplacian_loss = torch.trace(((L @ vertices[:v, :3]).T @ vertices[:v, :3]))
 
             face_normals = compute_face_normals(vertices[:v, :3], faces[:f])
             vertex_normals = compute_vertex_normals(
@@ -268,16 +276,33 @@ def main(config):
 
                     # d_Phi / d_t
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
-                    loss += (
+
+                    loss += config.time_smoothing * (
                         normals[min_i:max_i, 3].abs().mean() / n_batches
-                    )  # d phi/ dt term for morphing
+                    )  # d phi/ dt regularization term
+                    # OR: get the time step between t=i and t = i+1 and make df/dt = 0 in that time
+
+                    loss += config.eikonal_coeff * (
+                        torch.mean(torch.norm(normals[min_i:max_i, :3], dim=-1) - 1)
+                        ** 2
+                    )  # Eikonal loss
+
+                    # The term for gradients to be orthogonal to vector field F
+                    loss += config.orthogonal_coeff * (
+                        torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1)
+                        .abs()
+                        .mean()
+                        / n_batches
+                    )
+
+                    # CHECK: input vertices should be between -1 and 1
+
+                    # t between 0 and 1 -> 0 and 0.1 and 0.2
+                    # for intermediate t between 0 and 0.1
 
                     # term for morphing
                     # d_phi/dt * <grad(phi), F>
                     # loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
-
-                    # Force F to have small magnitude
-                    # loss += F[min_i:max_i].abs().mean() / n_batches
 
                     loss.backward()
                     logger.add_scalar("loss", loss.item(), global_step=e)
