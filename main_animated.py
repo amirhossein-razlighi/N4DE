@@ -8,93 +8,7 @@ from models_animated import SDFModule
 from render import Renderer
 from utils import *
 from tqdm import tqdm
-
-
-def gauss_kernel(size=5, device=torch.device("cuda:0"), channels=3):
-    kernel = torch.tensor(
-        [
-            [1.0, 4.0, 6.0, 4.0, 1],
-            [4.0, 16.0, 24.0, 16.0, 4.0],
-            [6.0, 24.0, 36.0, 24.0, 6.0],
-            [4.0, 16.0, 24.0, 16.0, 4.0],
-            [1.0, 4.0, 6.0, 4.0, 1.0],
-        ]
-    )
-    kernel /= 256.0
-    kernel = kernel.repeat(channels, 1, 1, 1)
-    kernel = kernel.to(device)
-    return kernel
-
-
-def downsample(x):
-    return x[:, :, ::2, ::2]
-
-
-def conv_gauss(img, kernel, device=torch.device("cuda:0")):
-    img = torch.nn.functional.pad(img, (2, 2, 2, 2), mode="reflect")
-    out = torch.nn.functional.conv2d(
-        img.to(device), kernel.to(device), groups=img.shape[1]
-    )
-    return out
-
-
-def img_loss(
-    imgs,
-    target_imgs,
-    multi_scale=True,
-    include_depth=False,
-    config=None,
-    device=torch.device("cuda:0"),
-):
-    loss = 0
-    kernel = gauss_kernel(device=device)
-    count = 0
-    images = imgs
-    imgs = images[:, :, :, :3]
-    depths = images[:, :, :, 3]
-    targets = target_imgs
-    target_imgs = targets[:, :, :, :3]
-    target_depths = targets[:, :, :, 3]
-
-    for i in range(imgs.shape[0]):
-        count += 1
-        loss = loss + (imgs[i] - target_imgs[i]).square().mean()
-        if multi_scale:
-            current_est = imgs[i].permute(2, 0, 1).unsqueeze(0)
-            current_gt = target_imgs[i].permute(2, 0, 1).unsqueeze(0)
-            for j in range(4):
-                filtered_est = conv_gauss(current_est, kernel, device)
-                filtered_gt = conv_gauss(current_gt, kernel, device)
-                down_est = downsample(filtered_est)
-                down_gt = downsample(filtered_gt)
-
-                current_est = down_est
-                current_gt = down_gt
-
-                loss = loss + (current_est - current_gt).square().mean() / (j + 1)
-        if include_depth:
-            loss += (depths[i] - target_depths[i]).square().mean() * config.lambda_depth
-    loss = loss / count
-    return loss
-
-
-"""
-A loss function, doing this:
-for (a,b) -> df/dt + <grad(f), F> = 0
-for t=t_i -> f = g_i
-"""
-
-
-def loss_morphing(gt_sdf, pred_sdf, F, vertices, t):
-    grad = gradient(pred_sdf, vertices)
-    df_dt = grad[:, 3]
-    df_3d = grad[:, :3]
-    if t == int(t):
-        return (gt_sdf - pred_sdf).abs().mean()
-    else:
-        return (gt_sdf - pred_sdf).abs().mean() + (
-            df_dt + torch.sum(df_3d * F, dim=-1)
-        ).abs().mean()
+from loss import *
 
 
 def main(config):
@@ -207,7 +121,7 @@ def main(config):
 
             edges = compute_edges(vertices[:v, :3], faces[:f])
             L = laplacian_simple(vertices[:v, :3], edges.long())
-            laplacian_loss = torch.trace(((L @ vertices[:v]).T @ vertices[:v]))
+            laplacian_loss = torch.trace(((L @ vertices[:v, :3]).T @ vertices[:v, :3]))
 
             face_normals = compute_face_normals(vertices[:v, :3], faces[:f])
             vertex_normals = compute_vertex_normals(
@@ -277,21 +191,28 @@ def main(config):
                     # d_Phi / d_t
                     loss = (gt_sdf[min_i:max_i] - pred_sdf).abs().mean() / n_batches
 
+                    # d phi/ dt time smoothing
+                    # loss += config.time_smoothing * (
+                    #     time_smoothing_loss(normals[min_i:max_i, 3]) / n_batches
+                    # )
+                    #TODO: Experimenting this idea ...
                     loss += config.time_smoothing * (
-                        normals[min_i:max_i, 3].abs().mean() / n_batches
-                    )  # d phi/ dt regularization term
-                    # OR: get the time step between t=i and t = i+1 and make df/dt = 0 in that time
+                        time_smoothing_inter_frames_loss(
+                            t, t + 0.1, model, vertices[min_i:max_i]
+                        )
+                        / n_batches
+                    )
 
-                    loss += config.eikonal_coeff * (
-                        torch.mean(torch.norm(normals[min_i:max_i, :3], dim=-1) - 1)
-                        ** 2
-                    )  # Eikonal loss
+                    loss += (
+                        config.eikonal_coeff
+                        * eikonal_loss(normals[min_i:max_i, :3])
+                        / n_batches
+                    )
 
                     # The term for gradients to be orthogonal to vector field F
-                    loss += config.orthogonal_coeff * (
-                        torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1)
-                        .abs()
-                        .mean()
+                    loss += (
+                        config.orthogonal_coeff
+                        * orthogonal_normals(normals[min_i:max_i], F[min_i:max_i])
                         / n_batches
                     )
 
@@ -299,10 +220,6 @@ def main(config):
 
                     # t between 0 and 1 -> 0 and 0.1 and 0.2
                     # for intermediate t between 0 and 0.1
-
-                    # term for morphing
-                    # d_phi/dt * <grad(phi), F>
-                    # loss += normals[min_i:max_i, 3].abs().mean() * torch.sum(normals[min_i:max_i, :3] * F[min_i:max_i], dim=-1).abs().mean() / n_batches
 
                     loss.backward()
                     logger.add_scalar("loss", loss.item(), global_step=e)
@@ -317,31 +234,33 @@ def main(config):
                 "video",
                 video_tensor,
                 global_step=(e),
-                fps=10,
+                fps=1,
             )
         if e % config.img_log_freq == 0:
-            est_grid = make_grid(images[0].permute(2, 0, 1).clamp(0, 1)[..., :3])
+            est_grid = make_grid(images[0][..., :3].clamp(0, 1))
             depth_grid = make_grid(depths[0].unsqueeze(0).clamp(0, 1))
             for img in images[1:]:
                 est_grid = torch.cat(
-                    (est_grid, make_grid(img.permute(2, 0, 1).clamp(0, 1)[..., :3])),
-                    dim=2,
+                    (est_grid, make_grid(img[..., :3].clamp(0, 1))),
+                    dim=1,
                 )
             for depth in depths[1:]:
                 depth_grid = torch.cat(
                     (depth_grid, make_grid(depth.unsqueeze(0).clamp(0, 1))),
                     dim=2,
                 )
+            est_grid = est_grid.permute(2, 0, 1)  # reshape into (C, H, W)
             logger.add_image(
                 "est",
                 est_grid,
                 global_step=(e),
             )
-            logger.add_image(
-                "est_depth",
-                depth_grid,
-                global_step=(e),
-            )
+            if config.include_depth:
+                logger.add_image(
+                    "est_depth",
+                    depth_grid,
+                    global_step=(e),
+                )
         if e % config.mesh_log_freq == 0:
             with torch.no_grad():
                 mse = (imgs - target_imgs).square().mean()
