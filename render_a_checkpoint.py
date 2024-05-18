@@ -49,8 +49,9 @@ if __name__ == "__main__":
         renderer = Renderer(num_views=10, res=512, fname=None)
 
     for frame_num in range(args.num_frames):
+        time_ = frame_num / 10
         with torch.no_grad():
-            vertices_np, faces_np = model.get_zero_points(t=frame_num / 10, mesh_res=200)
+            vertices_np, faces_np = model.get_zero_points(t=time_, mesh_res=200)
             v = vertices_np.shape[0]
             f = faces_np.shape[0]
             vertices.data[:v] = torch.from_numpy(vertices_np)
@@ -64,7 +65,7 @@ if __name__ == "__main__":
             est_imgs = renderer.render(vertices[:v], faces[:f], vertex_normals)
         else:
             save_image(
-                f"{args.output_dir}/{frame_num:06d}_gt.png",
+                f"{args.output_dir}/{time_:06f}_gt.png",
                 renderers[frame_num].target_imgs[0, ..., :3].detach().cpu().numpy(),
             )
             est_imgs = renderers[frame_num].render(
@@ -73,6 +74,6 @@ if __name__ == "__main__":
         
         img_to_save = est_imgs[0, ..., :3]
         save_image(
-            f"{args.output_dir}/{frame_num:06d}_est.png",
+            f"{args.output_dir}/{time_:06f}_est.png",
             img_to_save.detach().cpu().numpy(),
         )
