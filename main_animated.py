@@ -84,6 +84,9 @@ def main(config):
         depths = []
         video_tensor = torch.zeros((config.num_frames, 3, config.res, config.res))
         # Iterating over frames (in one epoch)
+        avg_loss_photometric = 0
+        avg_loss = 0
+        avg_cd = 0
         for t in range(config.num_frames):
             qbar.set_postfix_str(f"Frame: {t}")
             # R = renderers[t]
@@ -141,7 +144,7 @@ def main(config):
             )
             loss = loss + laplace_lam * laplacian_loss
             loss.backward()
-            logger.add_scalar("image loss", loss.item(), global_step=e)
+            avg_loss_photometric += loss.item()
 
             if loss.item() < best_loss:
                 best_loss = loss.item()
@@ -195,7 +198,7 @@ def main(config):
                     # loss += config.time_smoothing * (
                     #     time_smoothing_loss(normals[min_i:max_i, 3]) / n_batches
                     # )
-                    #TODO: Experimenting this idea ...
+                    # TODO: Experimenting this idea ...
                     loss += config.time_smoothing * (
                         time_smoothing_inter_frames_loss(
                             t, t + 0.1, model, vertices[min_i:max_i]
@@ -222,10 +225,16 @@ def main(config):
                     # for intermediate t between 0 and 0.1
 
                     loss.backward()
-                    logger.add_scalar("loss", loss.item(), global_step=e)
+                    avg_loss += loss.item()
                     idx += config.batch_size
                 # update the parameters
                 optimizer.step()
+            if e % config.mesh_log_freq == 0:
+                mesh = trimesh.Trimesh(vertices_np, faces_np)
+                cd = compute_trimesh_chamfer(R.mesh, mesh)
+                avg_cd += cd
+        logger.add_scalar("image loss", avg_loss_photometric / config.num_frames, global_step=e)
+        logger.add_scalar("loss", avg_loss / config.num_frames, global_step=e)
 
         if e % config.video_log_freq == 0:
             images_ = torch.stack(images)
@@ -263,13 +272,11 @@ def main(config):
                 )
         if e % config.mesh_log_freq == 0:
             with torch.no_grad():
-                mse = (imgs - target_imgs).square().mean()
-                psnr = -10.0 * torch.log10(mse)
+                # mse = (imgs - target_imgs).square().mean()
+                psnr = -10.0 * torch.log10(avg_loss_photometric / config.num_frames)
                 logger.add_scalar("psnr", psnr, global_step=(e))
-            mesh = trimesh.Trimesh(vertices_np, faces_np)
-            cd = compute_trimesh_chamfer(R.mesh, mesh)
-            logger.add_scalar("cd", cd, global_step=(e))
-            mesh.export(f"{config.expdir}/mesh_{(e):07d}.ply")
+                logger.add_scalar("cd", avg_cd / config.num_frames, global_step=(e))
+                # mesh.export(f"{config.expdir}/mesh_{(e):07d}.ply")
         if e % config.ckpt_log_freq == 0:
             torch.save(
                 model.state_dict(),
