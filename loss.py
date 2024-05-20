@@ -8,7 +8,7 @@ def eikonal_loss(spatial_grads):
     return ((gradient_norm - 1) ** 2).mean()
 
 
-def orthogonal_normals(normals, Flow_field):
+def orthogonal_normals_loss(normals, Flow_field):
     return torch.sum(normals[..., :3] * Flow_field, dim=-1).abs().mean()
 
 
@@ -25,7 +25,19 @@ def time_smoothing_inter_frames_loss(current_t, next_t, model, vertices):
         create_graph=True,
         allow_unused=True,
     )[0][:, 3].detach()
-    return time_grad_forward.abs().mean()
+    difference = current_t - next_t
+    frame_to_inspect = (current_t + difference) / 2
+    new_vertices[:, 3] = frame_to_inspect
+    pred_sdf = model(new_vertices.unsqueeze(0)).squeeze(0)
+    time_grad_backward = torch.autograd.grad(
+        pred_sdf,
+        new_vertices,
+        grad_outputs=torch.ones_like(pred_sdf),
+        create_graph=True,
+        allow_unused=True,
+    )[0][:, 3].detach()
+
+    return (time_grad_forward + time_grad_backward).abs().mean()
 
 
 def time_smoothing_loss(time_grad):
