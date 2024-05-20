@@ -459,3 +459,17 @@ def get_vol_points(vertices, grad, F, num_vol_points, sigma=None, both=None):
     return torch.cat([near_points, far_points], dim=0), torch.cat(
         [near_F, far_F], dim=0
     )
+
+
+def positional_encoding(time_step, out_dim=512, device="cuda:0"):
+    """
+    Do positional encoding with time= time_step (e.g. = 1 or 2 or ...)
+    and return a vector in device of size out_dim
+    """
+    pe = torch.zeros(out_dim, device=device)
+    div_term = 1 / torch.pow(
+        10000, 2 * (torch.arange(0, out_dim, 2, device=device) / out_dim)
+    )
+    pe[0::2] = torch.sin(time_step * div_term)
+    pe[1::2] = torch.cos(time_step * div_term)
+    return pe
