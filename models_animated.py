@@ -2,8 +2,10 @@ import pdb
 import numpy as np
 import torch
 import torch.nn as nn
-from pytorch_lightning import LightningModule
 from utils import *
+from grid_encoding import *
+from tqdm import tqdm
+from simple_knn._C import distCUDA2
 
 
 # Initialization functions are borrowed from:
@@ -34,18 +36,11 @@ class Sine(nn.Module):
         # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
         return torch.sin(self.const * input)
 
+    def __repr__(self):
+        return self.__class__.__name__ + "(const={})".format(self.const)
 
-class Net(nn.Module):
-    """Decoder conditioned by adding.
 
-    Example configuration:
-        hidden_size: 256
-        n_blocks: 5
-        out_dim: 3  # we are outputting the gradient
-        sigma_condition: True
-        xyz_condition: True
-    """
-
+class SIREN(nn.Module):
     def __init__(self, _, cfg):
         super().__init__()
         self.cfg = cfg
@@ -54,20 +49,36 @@ class Net(nn.Module):
         self.hidden_size = hidden_size = cfg.hidden_size
         self.n_blocks = n_blocks = cfg.n_blocks
 
+        self.use_hieararchial_consts = cfg.use_hierarchial_consts
+        self.const = cfg.const
+        if self.use_hieararchial_consts:
+            self.consts = [cfg.const * (i + 1) for i in range(n_blocks + 1)]
+
+        self.act = getattr(cfg, "act", Sine(self.const))
+
         # Network modules
         self.blocks = nn.ModuleList()
         self.blocks.append(nn.Linear(dim, hidden_size))
-        for _ in range(n_blocks):
-            self.blocks.append(nn.Linear(hidden_size, hidden_size))
+        for i in range(n_blocks):
+            lst = nn.Sequential()
+            lst.append(nn.Linear(hidden_size, hidden_size))
+            if self.use_hieararchial_consts:
+                lst.append(Sine(self.consts[i]))
+            else:
+                lst.append(self.act)
+            self.blocks.append(lst)
+
         self.blocks.append(nn.Linear(hidden_size, out_dim))
-        self.act = Sine(cfg.const)
 
         # Initialization
-        self.apply(sine_init)
-        self.blocks[0].apply(first_layer_sine_init)
-        if getattr(cfg, "zero_init_last_layer", False):
-            torch.nn.init.constant_(self.blocks[-1].weight, 0)
-            torch.nn.init.constant_(self.blocks[-1].bias, 0)
+        if isinstance(self.act, Sine):
+            print("Sine activation function is used")
+            self.apply(sine_init)
+            if getattr(cfg, "not_first_layer_init", False):
+                self.blocks[0].apply(first_layer_sine_init)
+            if getattr(cfg, "zero_init_last_layer", False):
+                torch.nn.init.constant_(self.blocks[-1].weight, 0)
+                torch.nn.init.constant_(self.blocks[-1].bias, 0)
 
     def forward(self, x):
         """
@@ -75,81 +86,86 @@ class Net(nn.Module):
         :return: (bs, npoints, self.dim) Gradient (self.dim dimension)
         """
         net = x  # (bs, n_points, dim)
-        self.debug_res = []
         for block in self.blocks[:-1]:
-            net = self.act(block(net))
-            self.debug_res.append(net)
+            net = block(net)  # Activation function is also included in the block
         out = self.blocks[-1](net)
-        self.debug_res.append(out)
         return out
 
 
-class SDFModule(LightningModule):
+class EncoderPlusSDF(nn.Module):
     def __init__(
         self,
         in_features=3,
-        w0_initial=30.0,
-        cfg=None,
-        f: str = None,
-        save_dir: str = None,
         device: str = "cuda:0",
     ):
-        super().__init__()
-        self.synthesis_nw = Net("", cfg).to(device)
-        if f is not None:
-            if f.endswith("sphere.pt"):
-                state_dict = torch.load(f)["net"]
-                for key in state_dict.keys():
-                    state_dict[key] = state_dict[key].to(device)
-                # randomly initialize the time weights to be between 0 and 1 and add them to state_dict
-                # which is [512, 3] so it become [512, 4]
-                state_dict[f"blocks.0.weight"] = torch.cat(
-                    (state_dict[f"blocks.0.weight"], torch.zeros(512, 1).to(device)),
-                    dim=1,
-                )
-                self.synthesis_nw.load_state_dict(state_dict)
-            else:
-                state_dict = torch.load(f)
-                new_state_dict = {}
-                for key in state_dict.keys():
-                    where_ = key.find("block")
-                    new_state_dict[key[where_:]] = state_dict[key]
-                self.synthesis_nw.load_state_dict(new_state_dict)
+        super(EncoderPlusSDF, self).__init__()
 
-            self.save_dir = save_dir
+        F = 8
+        L = 16
+        self.encoder = get_a_grid_encoder(
+            input_dims=3,
+            F=F,
+            L=L,
+            log2_T=19,
+            N_min=64,
+            scale=1.5,
+            interpolation="Linear",
+        ).to(device)
 
+        self.sdf_head = nn.Sequential(
+            # nn.Linear(F * L + 64, 256),
+            nn.Linear(F * L + 64, 128),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            # nn.Linear(256, 256),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            # nn.Linear(256, 256),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            # nn.Linear(256, 256),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            # nn.Linear(256, 256),
+            nn.Tanh(),
+            nn.Linear(128, 1),
+            # nn.Linear(256, 1),
+        ).to(device)
+
+        self.num_time_freqs = 64
+        self.num_pos_freqs = 64
         self.in_features = in_features
 
-    def gradient(self, x):
-        x.requires_grad_(True)
-        y = self.forward(x)[:, :1]
-        d_output = torch.ones_like(y, requires_grad=False, device=y.device)
-        gradients = torch.autograd.grad(
-            outputs=y,
-            inputs=x,
-            grad_outputs=d_output,
-            create_graph=True,
-            retain_graph=True,
-            only_inputs=True,
-        )[0]
-        return gradients.unsqueeze(1)
-
     def forward(self, coords):
-        est_sdf = self.synthesis_nw(coords)
-        return est_sdf
+        xyz = (coords[..., :3] + 1) / 2  # convert from [-1, 1] to [0, 1]
+        time_posenc = positional_encoding(coords[..., 3:4], self.num_time_freqs)
+        latent = self.encoder(xyz).float()
+        encoded = torch.cat((latent, time_posenc), dim=-1)
+        est_sdf = self.sdf_head(encoded)
+        return est_sdf, latent
 
     def get_zero_points(
-        self, t, extent=10, mesh_res=32, offset=0, verbose=False, device="cuda:0"
+        self,
+        t,
+        mesh_res=32,
+        offset=0,
+        verbose=False,
+        device="cuda:0",
+        batch_size=20000,
+        random=False,
     ):
         res = mesh_res
         bound = 1.0
-        batch_size = 20000
-        xs, ys, zs = np.meshgrid(np.arange(res), np.arange(res), np.arange(res))
-        grid = np.concatenate(
-            [ys[..., np.newaxis], xs[..., np.newaxis], zs[..., np.newaxis]], axis=-1
-        ).astype(np.float)
-        grid = (grid / float(res - 1) - 0.5) * 2 * bound
-        grid = grid.reshape(-1, 3)
+        if not random:
+            xs, ys, zs = np.meshgrid(np.arange(res), np.arange(res), np.arange(res))
+            grid = np.concatenate(
+                [ys[..., np.newaxis], xs[..., np.newaxis], zs[..., np.newaxis]], axis=-1
+            ).astype(np.float)
+            grid = (grid / float(res - 1) - 0.5) * 2 * bound
+            grid = grid.reshape(-1, 3)
+        else:
+            raise NotImplementedError("Random sampling is not implemented yet")
+
         voxel_size = 2.0 / (res - 1)
         voxel_origin = -1 * bound
 
@@ -167,6 +183,7 @@ class SDFModule(LightningModule):
                     .to(device)
                     .view(1, -1, 3)
                 )
+
                 # concat time to 'xyz - offset' and feed in to the network
                 inp = torch.cat(
                     (
@@ -174,33 +191,30 @@ class SDFModule(LightningModule):
                         torch.ones((xyz.shape[0], xyz.shape[1], 1)).to(device) * t,
                     ),
                     dim=2,
-                )
-                distances = self.forward(inp)
+                ).squeeze(0)
+
+                distances, _ = self.forward(inp)
                 distances = distances.cpu().numpy()
             dists_lst.append(distances.reshape(-1))
         dists = np.concatenate([x.reshape(-1, 1) for x in dists_lst], axis=0).reshape(
             -1
         )
-
         field = dists.reshape(res, res, res)
         try:
             vert, face, _, _ = skimage.measure.marching_cubes(
                 field, level=0.0, spacing=[voxel_size] * 3, method="lorensen"
             )
         except:
-            for item in self.synthesis_nw.debug_res:
-                print(item)
-            print(inp)
-            print(inp.shape)
-            print(distances)
-            print(distances.shape)
-            print(field)
-            print(dists_lst)
-            print(dists)
-            print(res)
-            torch.save(
-                self.state_dict(),
-                f"{self.save_dir}/failed_model_{t}.pth",
+            # print(inp)
+            # print(inp.shape)
+            # print(distances)
+            # print(distances.shape)
+            # print(field)
+            # print(dists_lst)
+            # print(dists)
+            # print(res)
+            print(
+                f"If you want to see the trace of the error, uncomment the print statements in get_zero_points"
             )
             raise Exception("Failed to do marching cubes!")
         vert += voxel_origin
@@ -208,40 +222,93 @@ class SDFModule(LightningModule):
         return vert, face
 
 
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float()
-            * (-torch.log(torch.tensor(10000.0)) / d_model)
-        )
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.pe = pe
+class RenderHead(nn.Module):
+    def __init__(self, sh_order=3, scaling_factor=2 / 200):
+        super(RenderHead, self).__init__()
+        self.sh_order = sh_order
+        self.scaling_activation = torch.exp
+        self.scaling_inverse_activation = torch.log
+        self.opacity_activation = torch.sigmoid
+        self.inverse_opacity_activation = inverse_sigmoid
+
+        self.rotation_activation = torch.nn.functional.normalize
+
+        F = 8
+        L = 16
+
+        self.grid_encoder = get_a_grid_encoder(
+            3,
+            L,
+            F,
+            interpolation="Linear",
+        ).cuda()
+
+        self.num_time_freqs = 64
+
+        self.latent_head = nn.Sequential(
+            nn.Linear(F * L + self.num_time_freqs, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+        ).cuda()
+
+        self.sh_head = nn.Linear(64, 3 * (sh_order + 1) ** 2).cuda()
+        self.opacity_head = nn.Linear(64, 1).cuda()
+        # self.scaling_head = nn.Linear(64, 3).cuda()
+        self.scaling_factor = scaling_factor
+        self.rotation_head = nn.Linear(64, 4).cuda()  # quaternion
 
     def forward(self, x):
-        x = self.pe[:, : x.size(1), :].expand(x.size(0), -1, -1)
-        return self.dropout(x)
+        xyz = (x[..., :3] + 1) / 2
+        t_posenc = positional_encoding(x[..., 3:4], self.num_time_freqs)
+        latent = self.grid_encoder(xyz).float()
+        latent = self.latent_head(torch.cat((latent, t_posenc), dim=-1))
+
+        sh_coeffs = self.sh_head(latent).view(-1, (self.sh_order + 1) ** 2, 3)
+        opacity = self.opacity_activation(self.opacity_head(latent))
+        # scaling = self.scaling_activation(self.scaling_head(latent))
+        scaling = torch.full((x.shape[0], 3), self.scaling_factor).to(x.device)
+        rotation = self.rotation_activation(self.rotation_head(latent))
+
+        return sh_coeffs, opacity, scaling, rotation
 
 
-class TransformerEncoder(nn.Module):
-    def __init__(self, input_size, d_model, nhead, num_layers, dropout=0.1):
-        super(TransformerEncoder, self).__init__()
-        self.input_size = input_size
-        self.d_model = d_model
-        self.nhead = nhead
-        self.num_layers = num_layers
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead, dropout=dropout
-        )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
-        self.embedder = nn.Linear(input_size, d_model)
+class GaussianFourierFeatureTransform(torch.nn.Module):
+    """
+    An implementation of Gaussian Fourier feature mapping for 3D points.
+
+    "Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains":
+       https://arxiv.org/abs/2006.10739
+       https://people.eecs.berkeley.edu/~bmild/fourfeat/index.html
+
+    Given an input of size [n_points, 3],
+     returns a tensor of size [n_points, mapping_size*2].
+    """
+
+    def __init__(self, num_input_channels=3, mapping_size=256, scale=10):
+        super().__init__()
+
+        self._num_input_channels = num_input_channels
+        self._mapping_size = mapping_size
+        self._B = torch.randn((num_input_channels, mapping_size)) * scale
 
     def forward(self, x):
-        x = self.embedder(x)
-        x = self.transformer_encoder(x)
-        return x
+        assert x.dim() == 2, "Expected 2D input (got {}D input)".format(x.dim())
+
+        n_points, channels = x.shape
+
+        assert (
+            channels == self._num_input_channels
+        ), "Expected input to have {} channels (got {} channels)".format(
+            self._num_input_channels, channels
+        )
+
+        x = x @ self._B.to(x.device)
+
+        x = 2 * torch.pi * x
+        return torch.cat([torch.sin(x), torch.cos(x)], dim=1)

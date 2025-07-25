@@ -1,7 +1,0 @@
-[rank: 0] Seed set to 42
-/scratch/amirhossein_razlighi/micromamba/envs/auto-ys3zyedhdso6/lib/python3.9/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
-If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
-  warnings.warn(
-/scratch/amirhossein_razlighi/micromamba/envs/auto-ys3zyedhdso6/lib/python3.9/site-packages/torch/utils/cpp_extension.py:1967: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. 
-If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST'].
-  warnings.warn(

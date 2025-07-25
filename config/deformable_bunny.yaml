@@ -1,0 +1,53 @@
+exp: "Comparison_Deformable_Bunny" # "MULTIFRAME_DEFORMABLE_BUNNY"
+
+mesh: "data/Bunny_Scaling/"              # Only for synthetic mode. In other modes, it will be ignored
+logdir: "logs/"
+dataset_type: "synthetic"                  # moving_person | synthetic
+
+_continue: False                                            # Continue from a specified checkpoint
+folder_name:                                                # If _continue: True, this folder specifies the folder in which your logs are stored
+last_epoch:                                                 # If _continue: True, this shows the last epoch that your model was trained until previously
+
+num_frames: 3
+num_views: 100
+num_sample_views_for_splats: 50
+res: 512
+epochs: 3000
+iters: 1
+batch_size: 49_152
+batch_size_for_mc: 20_000
+eps: 0.001
+mesh_res_base: 200
+mesh_res_limit: 210
+fine_e: 1000
+max_v: 7_500_000
+
+lr: 0.0002
+render_lr: 0.0001
+scale: 1.7
+
+####### Render Coloured #######
+with_texture: False
+
+####### DEPTH #######
+include_depth: False
+lambda_depth: 0
+
+####### REGULARIZATIONS #######
+max_laplace_lam: 0.0002
+min_laplace_lam: 0.0
+ssim_lam: 0.01
+eikonal_lam: 0.001              # coefficient for eikonal loss
+initial_df_dt_lam: 0.0          # Also you can use: 0.001 # coefficient for df/dt in every epoch (it is a damping_factor. see: get_damping_factor in utils.py for more)
+
+####### LOGGING #######
+video_log_freq: 3000
+img_log_freq: 50
+mesh_log_freq: 50
+mesh_save_freq: 300
+ckpt_log_freq: 100
+tensorboard_mesh_log_freq: 3000
+evaluate_intermediate_times_every: 3000
+
+####### AUTOMATIC MIXED PRECISION #######
+use_amp: True

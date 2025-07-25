@@ -13,12 +13,16 @@ import trimesh
 import torch.nn as nn
 from torch.nn import functional as F
 import argparse
+from render_utils import C0, C1, C2, C3, C4
+from math import exp
 
 
 def gradient(y, x, grad_outputs=None):
     if grad_outputs is None:
         grad_outputs = torch.ones_like(y)
-    grad = torch.autograd.grad(y, [x], grad_outputs=grad_outputs, create_graph=True)[0]
+    grad = torch.autograd.grad(
+        y, [x], grad_outputs=grad_outputs, create_graph=True, allow_unused=True
+    )[0]
     return grad
 
 
@@ -33,7 +37,7 @@ def dir_counter(LOGDIR, endswith=None, consider_max=False):
             length = [
                 int(name.split("_")[0])
                 for name in os.listdir(LOGDIR)
-                if name.endswith(endswith)
+                if endswith in name
             ]
             if len(length) == 0:
                 length = 1
@@ -74,8 +78,8 @@ def parse_config(suffix="", create_dir=True, consider_max_dir=False):
     with open(args.config, "r") as f:
         config = yaml.load(f, Loader=yaml.Loader)
     config = dict2namespace(config)
-    if config.folder_name is not None:
-        config.expdir = config.logdir + "/" + config.folder_name
+    if config.folder_name is not None and config._continue:
+        config.expdir = os.path.join(config.logdir, config.folder_name)
     else:
         dir_count = (
             str(
@@ -87,7 +91,7 @@ def parse_config(suffix="", create_dir=True, consider_max_dir=False):
             + config.exp
             + suffix
         )
-        config.expdir = config.logdir + "/" + dir_count
+        config.expdir = config.logdir + dir_count
     print("Experiment dir: ", config.expdir)
     print()
     config.test_mesh = args.test_mesh
@@ -149,7 +153,7 @@ def laplacian_simple(verts: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
     # i.e. A[i, j] = 1 if (i,j) is an edge, or
     # A[e0, e1] = 1 &  A[e1, e0] = 1
     ones = torch.ones(idx.shape[1], dtype=torch.float32, device=verts.device)
-    A = torch.sparse.FloatTensor(idx, ones, (V, V))
+    A = torch.sparse_coo_tensor(idx, ones, (V, V))
 
     # the sum of i-th row of A gives the degree of the i-th vertex
     deg = torch.sparse.sum(A, dim=1).to_dense()
@@ -161,7 +165,7 @@ def laplacian_simple(verts: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
     deg1 = deg[e1]
     deg1 = torch.where(deg1 > 0.0, -deg1 * 0 - 1, deg1)
     val = torch.cat([deg0, deg1])
-    L = torch.sparse.FloatTensor(idx, val, (V, V))
+    L = torch.sparse_coo_tensor(idx, val, (V, V))
 
     # Then we add the diagonal values L[i, i] = -1.
     idx = torch.arange(V, device=verts.device)
@@ -169,7 +173,7 @@ def laplacian_simple(verts: torch.Tensor, edges: torch.Tensor) -> torch.Tensor:
     ones = (
         torch.ones(idx.shape[1], dtype=torch.float32, device=verts.device) * deg[idx[0]]
     )
-    L += torch.sparse.FloatTensor(idx, ones, (V, V))
+    L += torch.sparse_coo_tensor(idx, ones, (V, V))
 
     return L
 
@@ -294,7 +298,7 @@ def compute_face_normals(verts, faces):
         verts.index_select(1, fi[2]),
     ]
 
-    c = torch.cross(v[1] - v[0], v[2] - v[0])
+    c = torch.linalg.cross(v[1] - v[0], v[2] - v[0], dim=0)
     n = c / torch.norm(c, dim=0)
     return n
 
@@ -426,6 +430,63 @@ def save_image(fn, x):
     imageio.imsave(fn, x)
 
 
+def plot_grad_flow(named_parameters, writer, epoch):
+    """Logs the gradients flowing through different layers in the net during training to TensorBoard.
+    Can be used for checking for possible gradient vanishing / exploding problems.
+
+    "plot_grad_flow(self.model.named_parameters(), self.writer, epoch)" to visualize the gradient flow in TensorBoard,
+    where `self.writer` is an instance of `SummaryWriter` and `epoch` is the current epoch number.
+    """
+    for n, p in named_parameters:
+        if (p.requires_grad) and ("bias" not in n):
+            if p.grad is not None and p.grad.nelement() > 0:
+                writer.add_histogram("layers_grad/" + n, p.grad, epoch)
+
+
+def evaluate_mesh_at_specific_time(model, time, device, mesh_res=128, offset=0):
+    bound = 1.0
+    batch_size = 20000
+    xs, ys, zs = np.meshgrid(
+        np.arange(mesh_res), np.arange(mesh_res), np.arange(mesh_res)
+    )
+    grid = np.concatenate(
+        [ys[..., np.newaxis], xs[..., np.newaxis], zs[..., np.newaxis]], axis=-1
+    ).astype(np.float32)
+
+    grid = (grid / (mesh_res - 1) - 0.5) * 2.0 * bound
+    grid = grid.reshape(-1, 3)
+
+    voxel_size = 2.0 * bound / (mesh_res - 1)
+    voxel_origin = -1.0 * bound
+
+    dists_list = []
+    for i in range(grid.shape[0], batch_size):
+        start_idx, end_idx = i, min(i + batch_size, grid.shape[0])
+        points = grid[start_idx:end_idx]
+
+        with torch.no_grad():
+            xyz = torch.from_numpy(points).to(device)
+            t = torch.ones(xyz.shape[0], 1).to(device) * time
+            xyz = torch.cat([xyz, t], dim=1)
+            dists = model(xyz)
+            dists = dists.cpu().numpy()
+
+        dists_list.append(dists)
+
+    dists = np.concatenate([x.reshape(-1, 1) for x in dists_list], axis=0).reshape(-1)
+    field = dists.reshape(mesh_res, mesh_res, mesh_res)
+
+    verts, faces, _, _ = skimage.measure.marching_cubes_lewiner(
+        field,
+        level=0.0,
+        spacing=(voxel_size, voxel_size, voxel_size),
+    )
+
+    verts += voxel_origin
+    verts -= offset
+    return verts, faces
+
+
 def get_vol_points(vertices, grad, F, num_vol_points, sigma=None, both=None):
     points_per_vert = 1
 
@@ -461,15 +522,397 @@ def get_vol_points(vertices, grad, F, num_vol_points, sigma=None, both=None):
     )
 
 
-def positional_encoding(time_step, out_dim=512, device="cuda:0"):
+freq_bands = None
+
+
+def positional_encoding(inputs, out_dim=512, device="cuda:0"):
     """
-    Do positional encoding with time= time_step (e.g. = 1 or 2 or ...)
-    and return a vector in device of size out_dim
+    Do positional encoding in each dimension
+    and return a vector in device of size (N, num_input_dims * out_dim) | i.e. (N, 3 * 64)
     """
-    pe = torch.zeros(out_dim, device=device)
-    div_term = 1 / torch.pow(
-        10000, 2 * (torch.arange(0, out_dim, 2, device=device) / out_dim)
-    )
-    pe[0::2] = torch.sin(time_step * div_term)
-    pe[1::2] = torch.cos(time_step * div_term)
+    global freq_bands
+
+    if freq_bands is None:
+        freq_bands = torch.pow(
+            10000, -torch.arange(0, out_dim, 2, device=device).float() / out_dim
+        )
+
+    batch_size, num_dims = inputs.shape
+    pe = torch.zeros(batch_size, num_dims * out_dim, device=device)
+
+    # Expand inputs and frequencies for broadcasting
+    inputs_expanded = inputs.unsqueeze(-1)  # (batch_size, num_dims, 1)
+    freq_expanded = freq_bands.unsqueeze(0).unsqueeze(0)  # (1, 1, out_dim/2)
+
+    # Compute arguments for sin and cos
+    args = inputs_expanded * freq_expanded  # (batch_size, num_dims, out_dim/2)
+
+    # Compute sin and cos
+    sin_vals = torch.sin(args)
+    cos_vals = torch.cos(args)
+
+    # Interleave sin and cos values
+    pe_vals = torch.stack([sin_vals, cos_vals], dim=-1).flatten(start_dim=-2)
+
+    # Reshape to desired output shape
+    pe = pe_vals.reshape(batch_size, -1)
+
     return pe
+
+
+def calculate_view_direction(vertices, cam_positions):
+    """
+    Calculate the view direction from the camera positions to the vertices
+    """
+    cam_positions = cam_positions.unsqueeze(1)
+    view_direction = vertices - cam_positions
+    view_direction = view_direction / torch.norm(view_direction, dim=2, keepdim=True)
+    return view_direction
+
+
+def load_K_Rt_from_P(filename, P=None):
+    import cv2 as cv
+
+    if P is None:
+        lines = open(filename).read().splitlines()
+        if len(lines) == 4:
+            lines = lines[1:]
+        lines = [[x[0], x[1], x[2], x[3]] for x in (x.split(" ") for x in lines)]
+        P = np.asarray(lines).astype(np.float32).squeeze()
+
+    out = cv.decomposeProjectionMatrix(P)
+    K = out[0]
+    R = out[1]
+    t = out[2]
+
+    K = K / K[2, 2]
+    intrinsics = np.eye(4)
+    intrinsics[:3, :3] = K
+
+    pose = np.eye(4, dtype=np.float32)
+    pose[:3, :3] = R.transpose()
+    pose[:3, 3] = (t[:3] / t[3])[:, 0]
+
+    return intrinsics, pose
+
+
+def get_damping_factor(
+    epoch, initial_damping_factor, decay_rate, decay_type="exponential"
+):
+    if decay_type == "linear":
+        return initial_damping_factor * (1 - decay_rate * epoch)
+    elif decay_type == "exponential":
+        return initial_damping_factor * (decay_rate**epoch)
+    else:
+        raise ValueError("Unsupported decay_type. Use 'linear' or 'exponential'.")
+
+
+def calculate_volume(vertices, faces):
+    """
+    Calculate the inside volume of a mesh.
+
+    Args:
+    vertices (np.ndarray): Array of shape (N, 3) representing the vertices of the mesh.
+    faces (np.ndarray): Array of shape (M, 3) representing the faces of the mesh.
+
+    Returns:
+    float: The inside volume of the mesh.
+    """
+    volume = 0.0
+
+    for face in faces:
+        v0, v1, v2 = vertices[face]
+
+        # Calculate the signed volume of the tetrahedron formed by the face and the origin | (A x B) . C  / 6
+        tetra_volume = torch.dot(torch.cross(v0, v1), v2) / 6.0
+
+        volume += tetra_volume
+
+    return torch.abs(volume)
+
+
+def inverse_sigmoid(x):
+    x = x.clamp(min=1e-7, max=1 - 1e-7)  # to avoid log(0) and log(inf)
+    return torch.log(x / (1 - x))
+
+
+def report_average_metrics(metrics_dict, exp_directory):
+    clone_dict = {}
+    for key, val in metrics_dict.items():
+        if isinstance(val, torch.Tensor):
+            clone_dict[key] = val.mean().item()
+        elif isinstance(val, list):
+            clone_dict[key] = np.mean(val)
+
+    with open(os.path.join(exp_directory, "metrics.txt"), "a") as f:
+        f.write(str(clone_dict) + "\n")
+
+
+def sh_l2_regularization(sh_coeffs):
+    return torch.mean(sh_coeffs**2)
+
+
+def build_rotation(r):
+    norm = torch.sqrt(
+        r[:, 0] * r[:, 0] + r[:, 1] * r[:, 1] + r[:, 2] * r[:, 2] + r[:, 3] * r[:, 3]
+    )
+
+    q = r / norm[:, None]
+
+    R = torch.zeros((q.size(0), 3, 3), device="cuda")
+
+    r = q[:, 0]
+    x = q[:, 1]
+    y = q[:, 2]
+    z = q[:, 3]
+
+    R[:, 0, 0] = 1 - 2 * (y * y + z * z)
+    R[:, 0, 1] = 2 * (x * y - r * z)
+    R[:, 0, 2] = 2 * (x * z + r * y)
+    R[:, 1, 0] = 2 * (x * y + r * z)
+    R[:, 1, 1] = 1 - 2 * (x * x + z * z)
+    R[:, 1, 2] = 2 * (y * z - r * x)
+    R[:, 2, 0] = 2 * (x * z - r * y)
+    R[:, 2, 1] = 2 * (y * z + r * x)
+    R[:, 2, 2] = 1 - 2 * (x * x + y * y)
+    return R
+
+
+def build_scaling_rotation(s, r):
+    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
+    R = build_rotation(r)
+
+    L[:, 0, 0] = s[:, 0]
+    L[:, 1, 1] = s[:, 1]
+    L[:, 2, 2] = s[:, 2]
+
+    L = R @ L
+    return L
+
+
+def strip_lowerdiag(L):
+    uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
+
+    uncertainty[:, 0] = L[:, 0, 0]
+    uncertainty[:, 1] = L[:, 0, 1]
+    uncertainty[:, 2] = L[:, 0, 2]
+    uncertainty[:, 3] = L[:, 1, 1]
+    uncertainty[:, 4] = L[:, 1, 2]
+    uncertainty[:, 5] = L[:, 2, 2]
+    return uncertainty
+
+
+def strip_symmetric(sym):
+    return strip_lowerdiag(sym)
+
+
+def eval_sh(deg, sh, dirs):
+    """
+    Evaluate spherical harmonics at unit directions
+    using hardcoded SH polynomials.
+    Works with torch/np/jnp.
+    ... Can be 0 or more batch dimensions.
+    Args:
+        deg: int SH deg. Currently, 0-3 supported
+        sh: jnp.ndarray SH coeffs [..., C, (deg + 1) ** 2]
+        dirs: jnp.ndarray unit directions [..., 3]
+    Returns:
+        [..., C]
+    """
+    assert deg <= 4 and deg >= 0
+    coeff = (deg + 1) ** 2
+    assert sh.shape[-1] >= coeff
+
+    result = C0 * sh[..., 0]
+    if deg > 0:
+        x, y, z = dirs[..., 0:1], dirs[..., 1:2], dirs[..., 2:3]
+        result = (
+            result - C1 * y * sh[..., 1] + C1 * z * sh[..., 2] - C1 * x * sh[..., 3]
+        )
+
+        if deg > 1:
+            xx, yy, zz = x * x, y * y, z * z
+            xy, yz, xz = x * y, y * z, x * z
+            result = (
+                result
+                + C2[0] * xy * sh[..., 4]
+                + C2[1] * yz * sh[..., 5]
+                + C2[2] * (2.0 * zz - xx - yy) * sh[..., 6]
+                + C2[3] * xz * sh[..., 7]
+                + C2[4] * (xx - yy) * sh[..., 8]
+            )
+
+            if deg > 2:
+                result = (
+                    result
+                    + C3[0] * y * (3 * xx - yy) * sh[..., 9]
+                    + C3[1] * xy * z * sh[..., 10]
+                    + C3[2] * y * (4 * zz - xx - yy) * sh[..., 11]
+                    + C3[3] * z * (2 * zz - 3 * xx - 3 * yy) * sh[..., 12]
+                    + C3[4] * x * (4 * zz - xx - yy) * sh[..., 13]
+                    + C3[5] * z * (xx - yy) * sh[..., 14]
+                    + C3[6] * x * (xx - 3 * yy) * sh[..., 15]
+                )
+
+                if deg > 3:
+                    result = (
+                        result
+                        + C4[0] * xy * (xx - yy) * sh[..., 16]
+                        + C4[1] * yz * (3 * xx - yy) * sh[..., 17]
+                        + C4[2] * xy * (7 * zz - 1) * sh[..., 18]
+                        + C4[3] * yz * (7 * zz - 3) * sh[..., 19]
+                        + C4[4] * (zz * (35 * zz - 30) + 3) * sh[..., 20]
+                        + C4[5] * xz * (7 * zz - 3) * sh[..., 21]
+                        + C4[6] * (xx - yy) * (7 * zz - 1) * sh[..., 22]
+                        + C4[7] * xz * (xx - 3 * yy) * sh[..., 23]
+                        + C4[8]
+                        * (xx * (xx - 3 * yy) - yy * (3 * xx - yy))
+                        * sh[..., 24]
+                    )
+    return result
+
+
+def RGB2SH(rgb):
+    return (rgb - 0.5) / C0
+
+
+def SH2RGB(sh):
+    return sh * C0 + 0.5
+
+
+def render_colors_from_sh(sh_coeffs, directions, sh_order):
+    """
+    Render colors from SH coefficients.
+
+    Parameters:
+    - sh_coeffs: torch.Tensor, the SH coefficients, shape (N, num_sh_coeffs).
+    - directions: torch.Tensor, the viewing directions, shape (N, 3).
+    - sh_order: int, the order of spherical harmonics.
+
+    Returns:
+    - colors: torch.Tensor, the rendered colors, shape (N, 3).
+    """
+    evaled_sh_colors = eval_sh(sh_order, sh_coeffs, directions)
+    rgb_colors = SH2RGB(evaled_sh_colors)
+    return rgb_colors
+
+
+def gaussian(window_size, sigma):
+    gauss = torch.Tensor(
+        [
+            exp(-((x - window_size // 2) ** 2) / float(2 * sigma**2))
+            for x in range(window_size)
+        ]
+    )
+    return gauss / gauss.sum()
+
+
+def create_window(window_size, channel):
+    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+    window = torch.autograd.Variable(
+        _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+    )
+    return window
+
+
+def ssim(img1, img2, window_size=11, size_average=True):
+    channel = img1.size(-3)
+    window = create_window(window_size, channel)
+
+    if img1.is_cuda:
+        window = window.cuda(img1.get_device())
+    window = window.type_as(img1)
+
+    return _ssim(img1, img2, window, window_size, channel, size_average)
+
+
+def _ssim(img1, img2, window, window_size, channel, size_average=True):
+    mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
+    mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
+
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = (
+        F.conv2d(img1 * img1, window, padding=window_size // 2, groups=channel) - mu1_sq
+    )
+    sigma2_sq = (
+        F.conv2d(img2 * img2, window, padding=window_size // 2, groups=channel) - mu2_sq
+    )
+    sigma12 = (
+        F.conv2d(img1 * img2, window, padding=window_size // 2, groups=channel)
+        - mu1_mu2
+    )
+
+    C1 = 0.01**2
+    C2 = 0.03**2
+
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / (
+        (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
+    )
+
+    if size_average:
+        return ssim_map.mean()
+    else:
+        return ssim_map.mean(1).mean(1).mean(1)
+
+
+def sample_from_faces(vertices, faces, face_normals, num_samples, normal_offset=0.0):
+    """
+    Sample points from mesh faces with optional displacement along the face normals.
+
+    Args:
+        vertices (torch.Tensor): Vertex positions with shape (V, 3).
+        faces (torch.Tensor): Face indices with shape (F, 3).
+        face_normals (torch.Tensor): Normals of each face, shape (F, 3).
+        num_samples (int): Number of points to sample.
+        normal_offset (float): Distance to offset samples along the normal direction.
+
+    Returns:
+        sampled_points (torch.Tensor): Sampled points of shape (num_samples, 3).
+    """
+    # Step 1: Get vertices of each face
+    face_vertices = vertices[faces]  # Shape: (F, 3, 3)
+
+    # Step 2: Calculate areas of faces for sampling
+    edge1 = face_vertices[:, 1] - face_vertices[:, 0]
+    edge2 = face_vertices[:, 2] - face_vertices[:, 0]
+    face_areas = 0.5 * torch.norm(
+        torch.cross(edge1, edge2, dim=1), dim=1
+    )  # Shape: (F,)
+
+    # Step 3: Probabilistically select faces based on area
+    face_probs = face_areas / face_areas.sum()
+    selected_faces = torch.multinomial(face_probs, num_samples, replacement=True)
+
+    # Step 4: Sample points within each selected face using barycentric coordinates
+    u = torch.sqrt(torch.rand(num_samples, 1, device=vertices.device))
+    v = torch.rand(num_samples, 1, device=vertices.device)
+    w = 1 - u
+    u, v = u * w, v * w  # Adjusted barycentric coordinates
+
+    face_verts_selected = face_vertices[selected_faces]
+    sampled_points = (
+        u * face_verts_selected[:, 0]
+        + v * face_verts_selected[:, 1]
+        + (1 - u - v) * face_verts_selected[:, 2]
+    )
+
+    # Step 5: Offset sampled points along face normals if specified
+    if normal_offset != 0.0:
+        sampled_normals = face_normals[selected_faces]
+        sampled_points += normal_offset * sampled_normals
+
+    return sampled_points
+
+
+def save_epoch_number_to_a_file(epoch_number, file_path):
+    with open(file_path, "w") as f:
+        f.write(str(epoch_number))
+
+
+def load_epoch_number_from_a_file(file_path):
+    with open(file_path, "r") as f:
+        return int(f.read())
