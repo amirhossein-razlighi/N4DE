@@ -4,13 +4,17 @@ import torch.optim
 from torch.utils.tensorboard import SummaryWriter
 from models_animated import *
 from tqdm import tqdm
-from train_with_splats import perform_training
 import warnings
 
 warnings.filterwarnings("ignore")
 
 
 def main(config):
+    if config.with_texture:
+        from train_with_splats import perform_training
+    else:
+        from train import perform_training
+
     torch.manual_seed(42)
     np.random.seed(42)
     torch.cuda.empty_cache()
