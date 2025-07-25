@@ -54,6 +54,12 @@ python3 splat_init.py
 This will save a checkpoint to `checkpoints/render_init.pth`. It will be loaded by default via the model when you run `main_animated.py`.
 
 ## How to train the model and fit to a scene
+<div style="text-align: center">
+<img src="static/sphere_time_samples.png" width="600"/>
+</div>
+
+<br>
+
 ```
 python3 main_animated.py --config config/{Your desired config}.yaml
 ```
